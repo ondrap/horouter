@@ -10,7 +10,7 @@ module RouteConfig (
   , RouteException(..)
 ) where
     
-import qualified PrioQueueHeap as PQ
+import qualified PrioQueue as PQ
 import Control.Concurrent.MVar
 import Control.Concurrent (forkIO)
 import qualified Data.Map.Strict as M
@@ -61,18 +61,16 @@ routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap 
         Just hroute -> do
             let hq = hostRoutes hroute
                 hsem = hostSemaphore hroute
-            hasroute <- PQ.lookup addr hq
-            case hasroute of
+            moldlimit <- PQ.adjustLimit addr limit hq
+            case moldlimit of
                     Nothing -> do
                         SEM.signal hsem limit
                         _ <- PQ.insert (0, addr) limit hq
                         return ()
-                    Just (priority, limit)-> do
+                    Just oldlimit -> do
                         -- Update limit of an item if it is different
-                        oldlimit <- PQ.adjustLimit addr limit hq
                         case () of
-                           _| oldlimit == 0    -> return () -- not found, shouldn't happen as we are locked in MVAR?
-                            | limit > oldlimit -> SEM.signal hsem (limit - oldlimit)
+                           _| limit > oldlimit -> SEM.signal hsem (limit - oldlimit)
                             | limit < oldlimit -> (forkIO $ SEM.wait hsem (oldlimit - limit)) >> return ()
                             | otherwise        -> return ()
             return rmap
@@ -97,7 +95,7 @@ routeDel (RouteConfig {routeMap}) uri addr = modifyMVar_ routeMap $ \rmap -> do
             case item of
                  Just (_, limit) -> do
                     PQ.delete addr (hostRoutes hroute)
-                    forkIO $ SEM.wait (hostSemaphore hroute) limit
+                    _ <- forkIO $ SEM.wait (hostSemaphore hroute) limit
                     return ()
                  Nothing ->
                     return ()
