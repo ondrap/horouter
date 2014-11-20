@@ -65,7 +65,7 @@ routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap 
             case moldlimit of
                     Nothing -> do
                         SEM.signal hsem limit
-                        _ <- PQ.insert (0, addr) limit hq
+                        PQ.insert (0, addr) limit hq
                         return ()
                     Just oldlimit -> do
                         -- Update limit of an item if it is different
@@ -76,7 +76,7 @@ routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap 
             return rmap
         Nothing -> do
             q <- PQ.newQueue
-            _ <- PQ.insert (0, addr) limit q
+            PQ.insert (0, addr) limit q
             msem <- SEM.new limit
             return $ M.insert iuri (HostRoute q msem) rmap
     where

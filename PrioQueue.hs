@@ -68,8 +68,8 @@ itemMinus1 (Item (Queue ioref) k) = atomicModifyIORef' ioref $ \q ->
             | True                         = Priority (priority - 1) limit
 
 -- | Insert new element into queue with given priority
-insert :: (Ord v) => (Int, v) -> Int -> Queue v -> IO (Item v)
-insert (p, k) limit iq@(Queue ioref) = atomicModifyIORef' ioref $ \q -> (PQ.insert k (Priority p limit) q, Item iq k)
+insert :: (Ord v) => (Int, v) -> Int -> Queue v -> IO ()
+insert (p, k) limit (Queue ioref) = atomicModifyIORef' ioref $ \q -> (PQ.insert k (Priority p limit) q, ())
 
 -- | Find a priority and priority limit of element
 lookup :: (Ord v) => v -> Queue v 
