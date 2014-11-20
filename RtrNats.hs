@@ -5,7 +5,6 @@ module RtrNats (
   , unregisterWebService
 ) where
 
-import Prelude hiding(IOException)
 import Data.Char (toLower)
 import Data.Aeson as AE
 import Data.Aeson.TH (deriveJSON, deriveToJSON, defaultOptions, fieldLabelModifier)
@@ -88,7 +87,7 @@ answerGreet nats rtstart _ _ _ (Just reply) = publish nats reply rtstart
 answerGreet _ _ _ _ _ _ = return ()
 
 handleRegister :: RouteConfig -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
-handleRegister rconf _ _ msg@(RtrRegister {..}) _ = 
+handleRegister rconf _ _ (RtrRegister {..}) _ = 
     forM_ rtrUris $ \uri -> do
         -- Resolve address
         let hints = NS.defaultHints {

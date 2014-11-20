@@ -24,7 +24,11 @@ routeRequest rconf request callProxy =
         `catch`
         (excConnFailed uri)
     where
-        doRoute (Route host port (N.SockAddrInet _ hostaddress)) = callProxy $ WPRProxyDest (ProxyDest host port (Just hostaddress))
+        doRoute (Route host port (N.SockAddrInet _ hostaddress)) = do
+            putStrLn $ "Connecting " ++ show port
+            res <- callProxy $ WPRProxyDest (ProxyDest host port (Just hostaddress))
+            putStrLn $ "Done " ++ show port
+            return res
         doRoute (Route host port _) = callProxy $ WPRProxyDest (ProxyDest host port Nothing)
             
         notFound = callProxy $ WPRResponse (WAI.responseLBS status404 [] "Route to host not found.")

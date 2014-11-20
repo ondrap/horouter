@@ -82,6 +82,15 @@ routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap 
     where
         iuri = CI.mk uri
 
+-- debug uri rmap = do
+--     case M.lookup uri rmap of
+--         Nothing -> return ()
+--         (Just hroute) -> do 
+--             dlist <- PQ.toList (hostRoutes hroute)
+--             putStrLn $ show dlist
+--             avail <- SEM.peekAvail (hostSemaphore hroute)
+--             putStrLn $ show avail
+        
 routeDel :: RouteConfig 
     -> BS.ByteString    -- ^ Domain mapping
     -> Route            -- ^ IP address:port of instance

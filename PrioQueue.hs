@@ -10,6 +10,7 @@ module PrioQueue (
   , lookup
   , size
   , adjustLimit
+  , toList
 ) where
 
 -- Prioritni fronta postavena na Data.Heap
@@ -18,16 +19,15 @@ import Data.IORef
 import qualified Data.PSQueue as PQ
 import Control.Applicative ((<$>))
 
-data Record a = Record a Int
-instance Eq a => Eq (Record a) where
-    (Record a _) == (Record b _) = a == b
-instance Ord a => Ord (Record a) where
-    (Record a _) `compare` (Record b _) = a `compare` b
-    
-recLimit :: Record a -> Int
-recLimit (Record _ limit) = limit
+data Priority = Priority Int Int
+instance Eq Priority where
+    (Priority p1 _) == (Priority p2 _) = p1 == p2
+instance Ord Priority where
+    (Priority p1 l1) `compare` (Priority p2 l2)
+        | p1 == p2 = l1 `compare` l2
+        | True     = p1 `compare` p2
 
-data Queue v = Queue (IORef (PQ.PSQ (Record v) Int))
+data Queue v = Queue (IORef (PQ.PSQ v Priority))
 data Item v = Item (Queue v) v
 
 -- | If the priority gets over limit, it gets upgraded to sentinelPriority,
@@ -50,49 +50,35 @@ getMinAndPlus1 iq@(Queue ioref) = atomicModifyIORef' ioref $ \q ->
          Nothing -> (q, Nothing)
          Just (binding, nq) ->
             let 
-                resqueue = PQ.insert (PQ.key binding) (incPrio binding) nq
+                resqueue = PQ.insert (PQ.key binding) (incPrio $ PQ.prio binding) nq
             in
-                (resqueue, Just $ Item iq (dval $ PQ.key binding))
+                (resqueue, Just $ Item iq (PQ.key binding))
     where
-        dval (Record a _) = a
-        incPrio binding
-            | priority + 1 >= limit = sentinelPriority
-            | True                  = priority + 1
-            where
-                priority = PQ.prio binding
-                limit = recLimit $ PQ.key binding
+        incPrio (Priority priority limit)
+            | priority + 1 == limit = Priority sentinelPriority limit
+            | True                  = Priority (priority + 1) limit
             
 -- | Update priority of item with (-1) (resort in the queue)
 itemMinus1 :: (Ord v) => Item v -> IO ()
 itemMinus1 (Item (Queue ioref) k) = atomicModifyIORef' ioref $ \q -> 
-    (PQ.adjustWithKey decPriority (Record k 0) q, ())
+    (PQ.adjust decPriority k q, ())
     where
-        decPriority (Record _ limit) priority 
-            | priority - 1 < sentinelPriority = limit - 1
-            | True                            = priority - 1
+        decPriority (Priority priority limit)
+            | priority == sentinelPriority = Priority (limit - 1) limit
+            | True                         = Priority (priority - 1) limit
 
 -- | Insert new element into queue with given priority
 insert :: (Ord v) => (Int, v) -> Int -> Queue v -> IO (Item v)
-insert (p, k) limit iq@(Queue ioref) = atomicModifyIORef' ioref $ \q -> (PQ.insert (Record k limit) p q, Item iq k)
-
--- | Find a particular item and priority in the queue O(n)
-mlookup :: Ord a => a -> PQ.PSQ a Int -> Maybe (PQ.Binding a Int)
-mlookup k q
-    | null bindings = Nothing
-    | True          = Just $ head bindings
-    where
-        bindings = filter (\b -> PQ.key b == k) $ PQ.toList q
+insert (p, k) limit iq@(Queue ioref) = atomicModifyIORef' ioref $ \q -> (PQ.insert k (Priority p limit) q, Item iq k)
 
 -- | Find a priority and priority limit of element
 lookup :: (Ord v) => v -> Queue v 
     -> IO (Maybe (Int, Int)) -- ^ (current priority, maximum priority)
 lookup k (Queue ioref) = do
     pq <- readIORef ioref
-    case mlookup (Record k 0) pq of
+    case PQ.lookup k pq of
          Nothing -> return Nothing
-         Just binding -> return $ toPair binding
-    where
-        toPair b = return (PQ.prio b, recLimit $ PQ.key b)
+         Just (Priority prio limit) -> return $ Just (prio, limit)
 
 -- | Adjust limit of an item
 adjustLimit :: (Ord v) => v  -- ^ Item for which to adjust the limit
@@ -100,21 +86,19 @@ adjustLimit :: (Ord v) => v  -- ^ Item for which to adjust the limit
     -> Queue v 
     -> IO (Maybe Int)   -- ^ Old limit (Nothing if key does not exist))
 adjustLimit k newlimit (Queue ioref) = atomicModifyIORef ioref $ \q ->
-    case mlookup (Record k 0) q of
+    case PQ.lookup k q of
          Nothing -> (q, Nothing)
-         Just binding ->
+         Just (Priority oldpriority oldlimit) ->
             case () of 
                 _| oldlimit == newlimit -> (q, Just oldlimit)
                  | otherwise ->
                         let
-                            deletedq = PQ.delete (Record k 0) q
+                            deletedq = PQ.delete k q
                             newpriority = limitPrio newlimit $ delimitPrio oldlimit oldpriority
-                            newqueue = PQ.insert (Record k newlimit) newpriority deletedq
+                            newqueue = PQ.insert k (Priority newpriority newlimit) deletedq
                         in
                             (newqueue, Just oldlimit)
             where
-                oldpriority = PQ.prio binding
-                oldlimit = recLimit $ PQ.key binding
                 -- Recompute priority so that it would adhere to new sentinel
                 limitPrio limit priority
                     | priority >= limit = sentinelPriority + (priority - limit)
@@ -125,7 +109,17 @@ adjustLimit k newlimit (Queue ioref) = atomicModifyIORef ioref $ \q ->
                 
 -- | Delete element from queue
 delete :: (Ord v) => v -> Queue v -> IO ()
-delete k (Queue ioref) = atomicModifyIORef' ioref $ \q -> (PQ.delete (Record k 0) q, ())
+delete k (Queue ioref) = atomicModifyIORef' ioref $ \q -> (PQ.delete k q, ())
 
 size :: (Ord v) => Queue v -> IO Int
 size (Queue ioref) = PQ.size <$> readIORef ioref
+
+-- | Convert queue to list, mostly for debugging purposes
+toList :: (Ord v) => Queue v -> IO [(Int, Int, v)]
+toList (Queue ioref) = do
+    pq <- readIORef ioref
+    return $ map convert $ PQ.toList pq
+    where 
+        convert binding = (prio, limit, PQ.key binding)
+            where
+                (Priority prio limit) = PQ.prio binding
