@@ -26,11 +26,11 @@ routeRequest rconf request callProxy = do
         withBestRoute rconf uri (doRoute requestStartTime) notFound
             `catch` (excConnFailed uri)
     where
-        doRoute starttime route@(Route host port _) = 
+        doRoute starttime route@(Route host port _ appid) = 
             let
                 proxy = routeToProxy route
                 -- TODO - find  where to se application id
-                newheaders = ("X-Cf-Applicationid", "")
+                newheaders = ("X-Cf-Applicationid", appid)
                            : ("X-Cf-Instanceid", BS.concat [host, ":", (BS.pack $ show port)])
                            : ("X-Request-Start", BS.pack $ show (truncate (1000 * (convert starttime :: Rational)) :: Int64))
                            : WAI.requestHeaders request
@@ -49,8 +49,8 @@ routeRequest rconf request callProxy = do
                 
         notFound = callProxy $ WPRResponse (WAI.responseLBS status404 [] "Route to host not found.")
         
-        routeToProxy (Route host port (N.SockAddrInet _ hostaddress)) = ProxyDest host port (Just hostaddress)
-        routeToProxy (Route host port _) = (ProxyDest host port Nothing)
+        routeToProxy (Route host port (N.SockAddrInet _ hostaddress) _) = ProxyDest host port (Just hostaddress)
+        routeToProxy (Route host port _ _) = (ProxyDest host port Nothing)
 
         -- We need to retype SomeException from RouteException back to normal exception; throw and catch it again
         excConnFailed uri (RouteException route exception) = 

@@ -52,6 +52,7 @@ data RtrRegister = RtrRegister {
       , rtrHost ::  BS.ByteString
       , rtrPort :: Int
       , rtrParallelLimit :: Int
+      , rtrApp :: BS.ByteString
     } deriving (Show)
     
 instance FromJSON BS.ByteString where
@@ -69,7 +70,8 @@ instance FromJSON RtrRegister where
             v .: "tags" .!= Map.empty <*>
             v .: "host" <*>
             v .: "port" <*>
-            v .: "parallelLimit" .!= defaultParallelLimit
+            v .: "parallelLimit" .!= defaultParallelLimit <*>
+            v .: "app" .!= ""
     parseJSON _ = mzero
     
 getExternalIPs :: IO [IPv4]
@@ -101,13 +103,13 @@ handleRegister rconf _ _ (RtrRegister {..}) _ =
                     return [])
         if null addrs 
            then return ()
-           else let route = Route rtrHost rtrPort (NS.addrAddress $ head addrs)
+           else let route = Route rtrHost rtrPort (NS.addrAddress $ head addrs) rtrApp
                 in routeAdd rconf uri route rtrParallelLimit
 
 handleUnregister :: RouteConfig -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
-handleUnregister rconf _ _ msg _  = 
-    forM_ (rtrUris msg) $ \uri -> 
-        routeDel rconf uri (Route (rtrHost msg) (rtrPort msg) undefined)
+handleUnregister rconf _ _ (RtrRegister {..}) _  = 
+    forM_ rtrUris $ \uri -> 
+        routeDel rconf uri (Route rtrHost rtrPort undefined rtrApp)
 
 startNatsService :: String -> RouteConfig -> IO ()
 startNatsService url rconf = do
@@ -119,20 +121,20 @@ startNatsService url rconf = do
     _ <- subscribe nats "router.unregister" Nothing (handleUnregister rconf)
     publish nats "router.start" rtrstart
 
-registerWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> Int -> IO ()
-registerWebService natsurl uris host port limit = do
+registerWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> Int -> BS.ByteString -> IO ()
+registerWebService natsurl uris host port limit appid = do
     bracket
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.register" $ RtrRegister uris Map.empty host port limit
+            publish nats "router.register" $ RtrRegister uris Map.empty host port limit appid
         )
 
-unregisterWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> IO ()
-unregisterWebService natsurl uris host port = do
+unregisterWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> BS.ByteString -> IO ()
+unregisterWebService natsurl uris host port appid = do
     bracket
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0
+            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid
         )

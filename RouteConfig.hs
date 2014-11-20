@@ -23,20 +23,25 @@ import Data.Typeable
 import qualified Control.Concurrent.MSemN as SEM
 
 
-data Route = Route BS.ByteString Int N.SockAddr
+data Route = Route {
+        routeHost :: BS.ByteString 
+      , routePort :: Int 
+      , routeSockAddr :: N.SockAddr 
+      , routeAppId :: BS.ByteString
+    }
 -- Allow N.SockAddr to be undefined for some operations
 instance Show Route where
-    show (Route h1 p1 _) = (BS.unpack h1) ++ ":" ++ (show p1)
+    show (Route {routeHost, routePort}) = (BS.unpack routeHost) ++ ":" ++ (show routePort)
 
 -- Ignore hostaddress when comparing
 instance Eq Route where
-    (Route h1 p1 _) == (Route h2 p2 _) = (h1, p1) == (h2, p2)
+    (Route {routeHost=h1,routePort=p1}) == (Route {routeHost=h2,routePort=p2}) = (h1, p1) == (h2, p2)
 instance Ord Route where
-    (Route h1 p1 _) `compare` (Route h2 p2 _) = (h1, p1) `compare` (h2, p2)
+    (Route {routeHost=h1,routePort=p1}) `compare` (Route {routeHost=h2,routePort=p2}) = (h1, p1) `compare` (h2, p2)
 
 data HostRoute = HostRoute {
-        hostRoutes :: PQ.Queue Route,
-        hostSemaphore :: SEM.MSemN Int
+        hostRoutes :: PQ.Queue Route
+      , hostSemaphore :: SEM.MSemN Int
     }
     
 data RouteConfig = RouteConfig {
@@ -50,7 +55,7 @@ newRouteConfig = RouteConfig <$> newMVar M.empty
 
 routeAdd :: RouteConfig 
     -> BS.ByteString  -- ^ Domain mapping
-    -> Route          -- ^ IP address:port of instance
+    -> Route          -- ^ IP address:port of instance + some info
     -> Int            -- ^ Maximum parallel operations on this route
     -> IO ()
 routeAdd _ _ _ limit
@@ -142,6 +147,6 @@ withBestRoute (RouteConfig {routeMap}) uri routeFound notFound = do
                     (maybe (return ()) PQ.itemMinus1)
                     (maybe notFound $
                         \item -> let route = PQ.valueOf item
-                                in routeFound route
+                                 in routeFound route -- MAIN CALL of the code
                                     `catch` (throwIO . RouteException route)
                     )
