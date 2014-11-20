@@ -200,18 +200,18 @@ data WaiProxySettings = WaiProxySettings
     -- Since 0.3.1
     }
 
--- | How to set the X-Real-IP request header.
+-- | How to set the X-Real-IP/X- request header.
 --
 -- Since 0.2.0
 data SetIpHeader = SIHNone -- ^ Do not set the header
-                 | SIHFromSocket -- ^ Set it from the socket's address.
-                 | SIHFromHeader -- ^ Set it from either X-Real-IP or X-Forwarded-For, if present
+                 | SIHFromSocket HT.HeaderName -- ^ Set it from the socket's address.
+                 | SIHFromHeader HT.HeaderName -- ^ Set it from either X-Real-IP or X-Forwarded-For, if present
 
 instance Default WaiProxySettings where
     def = WaiProxySettings
         { wpsOnExc = defaultOnExc
         , wpsTimeout = Nothing
-        , wpsSetIpHeader = SIHFromSocket
+        , wpsSetIpHeader = SIHFromSocket "X-Real-IP"
         , wpsProcessBody = const Nothing
         , wpsUpgradeToRaw = \req ->
             (CI.mk <$> lookup "upgrade" (WAI.requestHeaders req)) == Just "websocket"
@@ -275,7 +275,7 @@ fixReqHeaders wps req =
                                        || (key == "connection" && value == "close"))
         $ WAI.requestHeaders req
   where
-    fromSocket = (("X-Real-IP", S8.pack $ showSockAddr $ WAI.remoteHost req):)
+    fromSocket hdr = ((hdr, S8.pack $ showSockAddr $ WAI.remoteHost req):)
     -- Adding empty accept-encoding header forces http-client not to add Accept-encoding: gzip
     addEmptyAcceptEncoding = 
         case lookup "accept-encoding" (WAI.requestHeaders req) of
@@ -283,11 +283,11 @@ fixReqHeaders wps req =
              Just _ -> id
     addXRealIP =
         case wpsSetIpHeader wps of
-            SIHFromSocket -> fromSocket
-            SIHFromHeader ->
+            SIHFromSocket hdr -> fromSocket hdr
+            SIHFromHeader hdr ->
                 case lookup "x-real-ip" (WAI.requestHeaders req) <|> lookup "X-Forwarded-For" (WAI.requestHeaders req) of
-                    Nothing -> fromSocket
-                    Just ip -> (("X-Real-IP", ip):)
+                    Nothing -> fromSocket hdr
+                    Just ip -> ((hdr, ip):)
             SIHNone -> id
 
 waiProxyToSettings :: (WAI.Request -> (WaiProxyResponse -> IO WAI.ResponseReceived) -> IO WAI.ResponseReceived)

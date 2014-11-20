@@ -22,7 +22,7 @@ executable horouter
                        wai==3.*, http-conduit>=2, warp==3.*, conduit-extra, conduit,
                        lifted-base, blaze-builder, async, wai-logger, data-default-class,
                        case-insensitive, word8, http-client, monad-control, streaming-commons,
-                       SafeSemaphore
+                       SafeSemaphore, convertible
                        
   ghc-options:         -O2 -Wall
                        
