@@ -14,6 +14,7 @@ import qualified Network.Socket as NS
 import System.IO.Unsafe (unsafePerformIO)
 import Network.BSD (getHostName)
 import Control.Monad
+import Control.Concurrent (forkIO)
 import Control.Applicative ((<$>), (<*>), pure)
 import qualified Data.ByteString.Char8 as BS
 import Control.Exception (bracket, catch, IOException)
@@ -23,11 +24,9 @@ import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 import qualified Network.Nats as NATS
 import Network.Nats.Json
+import Data.Time.Clock (getCurrentTime)
 
 import RouteConfig
-
-defaultRequestInterval :: Int
-defaultRequestInterval = 120
 
 defaultParallelLimit :: Int
 defaultParallelLimit = 20
@@ -82,14 +81,15 @@ getExternalIPs = (map ipv4 . filter isExternal) <$> getNetworkInterfaces
         isExternal _ = True
     
 localRtrStart :: IO RtrStart
-localRtrStart = RtrStart <$> getHostName <*> getExternalIPs <*> pure defaultRequestInterval
+localRtrStart = RtrStart <$> getHostName <*> getExternalIPs <*> pure defaultStaleInterval
     
 answerGreet :: NATS.Nats -> RtrStart -> NATS.MsgCallback
 answerGreet nats rtstart _ _ _ (Just reply) = publish nats reply rtstart
 answerGreet _ _ _ _ _ _ = return ()
 
 handleRegister :: RouteConfig -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
-handleRegister rconf _ _ (RtrRegister {..}) _ = 
+handleRegister rconf _ _ (RtrRegister {..}) _ = do
+    now <- getCurrentTime
     forM_ rtrUris $ \uri -> do
         -- Resolve address
         let hints = NS.defaultHints {
@@ -101,19 +101,22 @@ handleRegister rconf _ _ (RtrRegister {..}) _ =
             `catch` (\(e :: IOException) -> do
                     putStrLn $ "Registration: " ++ (show $ rtrHost) ++ ": " ++ show e
                     return [])
+        -- We support at most 1 address for the endpoint
         if null addrs 
            then return ()
-           else let route = Route rtrHost rtrPort (NS.addrAddress $ head addrs) rtrApp
+           else let route = Route rtrHost rtrPort (NS.addrAddress $ head addrs) rtrApp now
                 in routeAdd rconf uri route rtrParallelLimit
 
 handleUnregister :: RouteConfig -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
 handleUnregister rconf _ _ (RtrRegister {..}) _  = 
     forM_ rtrUris $ \uri -> 
-        routeDel rconf uri (Route rtrHost rtrPort undefined rtrApp)
-
+        routeDel rconf uri (Route rtrHost rtrPort undefined rtrApp undefined)
+        
+    
 startNatsService :: String -> RouteConfig -> IO ()
 startNatsService url rconf = do
     nats <- NATS.connect url
+    _ <- forkIO $ purgeStaleRoutes rconf
     
     rtrstart <- localRtrStart
     _ <- NATS.subscribe nats "router.greet" Nothing (answerGreet nats rtrstart)

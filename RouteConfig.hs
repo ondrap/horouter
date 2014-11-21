@@ -6,13 +6,15 @@ module RouteConfig (
   , newRouteConfig
   , routeAdd
   , routeDel
+  , purgeStaleRoutes
   , withBestRoute 
   , RouteException(..)
+  , defaultStaleInterval
 ) where
     
 import qualified PrioQueue as PQ
 import Control.Concurrent.MVar
-import Control.Concurrent (forkIO)
+import Control.Concurrent (forkIO, threadDelay)
 import qualified Data.Map.Strict as M
 import Control.Applicative ((<$>))
 import qualified Data.ByteString.Char8 as BS
@@ -21,13 +23,20 @@ import qualified Data.CaseInsensitive as CI
 import qualified Network.Socket as N
 import Data.Typeable
 import qualified Control.Concurrent.MSemN as SEM
+import Data.Time.Clock (UTCTime, getCurrentTime)
+import Control.Monad (forever)
+import Control.Monad.Trans.Maybe (runMaybeT, MaybeT(..))
+import Control.Monad.Trans.Class (lift)
 
+defaultStaleInterval :: Int
+defaultStaleInterval = 120
 
 data Route = Route {
         routeHost :: BS.ByteString 
       , routePort :: Int 
       , routeSockAddr :: N.SockAddr 
       , routeAppId :: BS.ByteString
+      , routeRegTime :: UTCTime
     }
 -- Allow N.SockAddr to be undefined for some operations
 instance Show Route where
@@ -100,32 +109,44 @@ routeDel :: RouteConfig
     -> BS.ByteString    -- ^ Domain mapping
     -> Route            -- ^ IP address:port of instance
     -> IO ()
-routeDel (RouteConfig {routeMap}) uri addr = modifyMVar_ routeMap $ \rmap -> do
-    putStrLn $ "Unregistering web service: " ++ (show uri) ++ " -> " ++ (show addr)
-    case (M.lookup iuri rmap) of
-        Nothing -> return rmap
-        Just hroute -> do
-            item <- PQ.lookup addr (hostRoutes hroute)
-            case item of
-                 Just (_, limit) -> do
-                    PQ.delete addr (hostRoutes hroute)
-                    _ <- forkIO $ SEM.wait (hostSemaphore hroute) limit
-                    return ()
-                 Nothing ->
-                    return ()
-
-            size <- PQ.size $ hostRoutes hroute
-            case size of
-                0 -> do
-                    -- Add something to the semaphore, so that things on the semaphore will
-                    -- eventually get through
-                    SEM.signal (hostSemaphore hroute) 1
-                    return $ M.delete iuri rmap
-                _ -> do
-                    return rmap
+routeDel (RouteConfig {routeMap}) uri route = modifyMVar_ routeMap $ \rmap -> do
+    putStrLn $ "Unregistering web service: " ++ (show uri) ++ " -> " ++ (show route)
+    newmap <- runMaybeT $ do
+        hroute <- MaybeT (return $ M.lookup iuri rmap)
+        (_, limit) <- MaybeT $ PQ.lookup route (hostRoutes hroute)
+        lift $ deleteRouteFromMapping iuri route hroute limit rmap
+    return $ maybe rmap id newmap
     where
         iuri = CI.mk uri
 
+        
+-- deleteRouteFromMapping :: Route -> HostRoutes -> M.Map BS.ByteString HostRoute -> IO (M.Map BS.ByteString HostRoute)
+deleteRouteFromMapping iuri route hroute limit rmap = do
+    PQ.delete route (hostRoutes hroute)
+    _ <- forkIO $ SEM.wait (hostSemaphore hroute) limit
+    
+    size <- PQ.size $ hostRoutes hroute
+    case size of
+        0 -> do
+            -- Add something to the semaphore, so that things on the semaphore will
+            -- eventually get through
+            SEM.signal (hostSemaphore hroute) 1
+            return $ M.delete iuri rmap
+        _ -> do
+            return rmap
+    
+        
+purgeStaleRoutes :: RouteConfig -> IO ()
+purgeStaleRoutes rconf@(RouteConfig {routeMap=mRouteMap}) = forever $ do
+    now <- getCurrentTime
+    threadDelay (defaultStaleInterval * 1000000)
+--     modifyMVar_ mRoutMap $ \rmap -> do
+--         newmap <- foldM (removeStale now) rmap (M.toList rmap)
+-- 
+-- removeStale now rmap (uri, hostRoutes) = do
+     
+            
+        
 data RouteException = RouteException Route SomeException
     deriving (Show, Typeable)
 instance Exception RouteException
