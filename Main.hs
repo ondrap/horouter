@@ -5,6 +5,7 @@ import Network.HTTP.ReverseProxy
 import           Network.Wai.Handler.Warp     (defaultSettings, runSettings,
                                                setPort,setNoParsePath)
 import qualified Network.HTTP.Client         as HC
+import Network.HTTP.Client.Internal (openSocketConnection)
 import qualified Network.Wai as WAI
 import           Network.HTTP.Types           (status404)
 import qualified Network.Socket as N
@@ -12,12 +13,18 @@ import Control.Applicative ((<$>))
 import qualified Data.ByteString.Char8 as BS
 import Control.Exception
 import Data.Time.Clock.POSIX (getPOSIXTime)
+import Data.Time.Clock
 import Data.Convertible.Base (convert)
 import Data.Convertible.Instances ()
+import Control.Concurrent (threadDelay)
 import Data.Int
+import Data.UUID (UUID)
+import Data.UUID.V4
+import Settings
 
 import RtrNats 
 import RouteConfig
+import Vcap
 
 routeRequest :: RouteConfig -> WAI.Request -> (WaiProxyResponse -> IO WAI.ResponseReceived) -> IO WAI.ResponseReceived
 routeRequest rconf request callProxy = do
@@ -58,7 +65,7 @@ routeRequest rconf request callProxy = do
             (throwIO exception) 
             `catch` \e -> case e of
                     (HC.FailedConnectionException2 _ _ _ _) -> failedConn
-                    (HC.FailedConnectionException _ _) -> failedConn
+                    (HC.FailedConnectionException _ _)      -> failedConn
                     _ -> throwIO e
             where
                 failedConn = do
@@ -66,25 +73,43 @@ routeRequest rconf request callProxy = do
                     routeDel rconf uri route
                     -- Retry with other host
                     routeRequest rconf request callProxy
-            
 
 main :: IO ()
 main = do
-    let url = "nats://127.0.0.1:4222"
+    uuid <- nextRandom
+    now <- getCurrentTime
+    let rtindex = 0
+    let settings = MainSettings {
+            msetIndex = rtindex
+          , msetPort = 2222
+          , msetUser = ""
+          , msetPassword = ""
+          , msetUUID = (show rtindex) ++ "-" ++ (show uuid)
+          , msetStart = now
+        }
+        
     rconf <- newRouteConfig
-    startNatsService url rconf
+    nats <- startNatsService rconf settings
+    startVcap nats settings
     
---     let settings = HC.defaultManagerSettings  {
---         HC.managerRawConnection = \socket -> HCI.makeConnection (recv socket 131072) (sendAll socket) (sClose socket)
---     }
---     
-    HC.withManager HC.defaultManagerSettings $ \manager -> do
-        let settings = setPort 2222 $ setNoParsePath True $ defaultSettings
-            app = waiProxyToSettings
-                    (routeRequest rconf)
-                    def{wpsOnExc=(\e -> throw e), 
-                        wpsTimeout=Just 30000000,
-                        wpsSetIpHeader=SIHFromSocket "X-Forwarded-For"
-                    }
-                    manager :: WAI.Application
-        runSettings settings app
+    putStrLn "Waiting to serve requests..."
+    -- Wait a moment until we get some messages over NATS
+    threadDelay 2000000
+    putStrLn "Serving requests."
+    
+    -- Use 128K blocks for data transfer using HTTP
+    let managerSettings = HC.defaultManagerSettings  {
+        HC.managerRawConnection = return $ openSocketConnection (const $ return ()) 131072
+    }
+    
+    let webSettings = setPort (msetPort settings) $ setNoParsePath True $ defaultSettings
+    
+    HC.withManager managerSettings $ \manager -> do
+        let app = waiProxyToSettings
+                (routeRequest rconf)
+                def{wpsOnExc=(\e -> throw e), 
+                    wpsTimeout=Just 30000000,
+                    wpsSetIpHeader=SIHFromSocket "X-Forwarded-For"
+                }
+                manager :: WAI.Application
+        runSettings webSettings app

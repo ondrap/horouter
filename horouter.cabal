@@ -21,8 +21,8 @@ executable horouter
                        nats-queue, text, network >= 2, aeson>=0.7, transformers, http-types,
                        wai==3.*, http-conduit>=2, warp==3.*, conduit-extra, conduit,
                        lifted-base, blaze-builder, async, wai-logger, data-default-class,
-                       case-insensitive, word8, http-client, monad-control, streaming-commons,
-                       SafeSemaphore, convertible
+                       case-insensitive, word8, http-client>0.4.4, monad-control, streaming-commons,
+                       SafeSemaphore, convertible, time, uuid, iproute, old-locale
                        
   ghc-options:         -O2 -Wall
                        

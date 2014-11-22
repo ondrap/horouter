@@ -214,7 +214,12 @@ instance Default WaiProxySettings where
         , wpsSetIpHeader = SIHFromSocket "X-Real-IP"
         , wpsProcessBody = const Nothing
         , wpsUpgradeToRaw = \req ->
-            (CI.mk <$> lookup "upgrade" (WAI.requestHeaders req)) == Just "websocket"
+            let
+                hdr = lookup "upgrade" (WAI.requestHeaders req)
+                dwords = S8.split ',' <$> hdr
+                iswebsocket = any ((== "websocket") . CI.mk) <$> dwords
+            in
+                iswebsocket == Just True
         }
 
 renderHeaders :: WAI.Request -> HT.RequestHeaders -> Builder

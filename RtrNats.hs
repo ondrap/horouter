@@ -3,16 +3,15 @@ module RtrNats (
     startNatsService
   , registerWebService
   , unregisterWebService
+  , getExternalIPs 
 ) where
 
 import Data.Char (toLower)
 import Data.Aeson as AE
 import Data.Aeson.TH (deriveJSON, deriveToJSON, defaultOptions, fieldLabelModifier)
-import Network.Info
-import Network.Socket (inet_ntoa, inet_addr)
+import qualified Network.Info as NetInfo
+import Data.IP (IPv4, fromHostAddress)
 import qualified Network.Socket as NS
-import System.IO.Unsafe (unsafePerformIO)
-import Network.BSD (getHostName)
 import Control.Monad
 import Control.Concurrent (forkIO)
 import Control.Applicative ((<$>), (<*>), pure)
@@ -27,6 +26,7 @@ import Network.Nats.Json
 import Data.Time.Clock (getCurrentTime)
 
 import RouteConfig
+import Settings
 
 defaultParallelLimit :: Int
 defaultParallelLimit = 20
@@ -39,10 +39,10 @@ data RtrStart = RtrStart {
 $(deriveJSON defaultOptions{fieldLabelModifier=(\(c:cs) -> (toLower c):cs) . drop 3} ''RtrStart)
 
 instance ToJSON IPv4 where
-    toJSON (IPv4 addr) = AE.String $ T.pack $ unsafePerformIO $ inet_ntoa addr
+    toJSON addr = AE.String $ T.pack $ show addr
     
 instance FromJSON IPv4 where
-    parseJSON (AE.String str) = return $ IPv4 $ unsafePerformIO $ inet_addr $ T.unpack str
+    parseJSON (AE.String str) = return $ read $ T.unpack str
     parseJSON _ = mzero
 
 data RtrRegister = RtrRegister {
@@ -74,14 +74,14 @@ instance FromJSON RtrRegister where
     parseJSON _ = mzero
     
 getExternalIPs :: IO [IPv4]
-getExternalIPs = (map ipv4 . filter isExternal) <$> getNetworkInterfaces
+getExternalIPs = (map (fromHostAddress . (\(NetInfo.IPv4 x) -> x) . NetInfo.ipv4) . filter isExternal) <$> NetInfo.getNetworkInterfaces
     where
-        isExternal (NetworkInterface {name="lo"}) = False
-        isExternal (NetworkInterface {ipv4=(IPv4 0)}) = False
+        isExternal (NetInfo.NetworkInterface {name="lo"}) = False
+        isExternal (NetInfo.NetworkInterface {ipv4=(NetInfo.IPv4 0)}) = False
         isExternal _ = True
     
-localRtrStart :: IO RtrStart
-localRtrStart = RtrStart <$> getHostName <*> getExternalIPs <*> pure defaultStaleInterval
+localRtrStartMsg :: String -> IO RtrStart
+localRtrStartMsg uuid = RtrStart <$> pure uuid <*> getExternalIPs <*> pure defaultStaleInterval
     
 answerGreet :: NATS.Nats -> RtrStart -> NATS.MsgCallback
 answerGreet nats rtstart _ _ _ (Just reply) = publish nats reply rtstart
@@ -112,17 +112,24 @@ handleUnregister rconf _ _ (RtrRegister {..}) _  =
     forM_ rtrUris $ \uri -> 
         routeDel rconf uri (Route rtrHost rtrPort undefined rtrApp undefined)
         
-    
-startNatsService :: String -> RouteConfig -> IO ()
-startNatsService url rconf = do
-    nats <- NATS.connect url
-    _ <- forkIO $ purgeStaleRoutes rconf
-    
-    rtrstart <- localRtrStart
-    _ <- NATS.subscribe nats "router.greet" Nothing (answerGreet nats rtrstart)
+startNatsService :: RouteConfig -> MainSettings -> IO NATS.Nats
+startNatsService rconf settings = do
+    rtrstartmsg <- localRtrStartMsg (msetUUID settings)
+    nats <- NATS.connectSettings NATS.defaultSettings{
+            NATS.natsOnConnect=(onConnect rtrstartmsg)
+        }
+        
+    _ <- NATS.subscribe nats "router.greet" Nothing (answerGreet nats rtrstartmsg)
     _ <- subscribe nats "router.register" Nothing (handleRegister rconf)
     _ <- subscribe nats "router.unregister" Nothing (handleUnregister rconf)
-    publish nats "router.start" rtrstart
+    publish nats "router.start" rtrstartmsg
+    
+    _ <- forkIO $ purgeStaleRoutes rconf
+    return nats
+    where
+        onConnect msg nats _ = do
+            publish nats "router.start" msg
+        
 
 registerWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> Int -> BS.ByteString -> IO ()
 registerWebService natsurl uris host port limit appid = do
@@ -141,3 +148,5 @@ unregisterWebService natsurl uris host port appid = do
         (\nats ->
             publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid
         )
+
+        
