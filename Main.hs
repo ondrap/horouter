@@ -39,6 +39,10 @@ httpRequestTimeout = 30 * 1000000
 httpChunkSize :: Int
 httpChunkSize = 128 * 1024
 
+proxySettings = def{wpsOnExc=(\e -> throw e), 
+                    wpsTimeout=Just httpRequestTimeout,
+                    wpsSetIpHeader=SIHFromSocket "X-Forwarded-For"
+                }
 
 routeRequest :: RouteConfig -> WAI.Request -> (WaiProxyResponse -> IO WAI.ResponseReceived) -> IO WAI.ResponseReceived
 routeRequest rconf request callProxy = do
@@ -49,7 +53,7 @@ routeRequest rconf request callProxy = do
     where
         doRoute starttime route@(Route {routeHost=host, routePort=port, routeAppId=appid}) = 
             let
-                proxy = routeToProxy route
+                proxyDest = routeToProxyDest route
                 newheaders = ("X-Cf-Applicationid", appid)
                            : ("X-Cf-Instanceid", BS.concat [host, ":", (BS.pack $ show port)])
                            : ("X-Request-Start", BS.pack $ show (truncate (1000 * (convert starttime :: Rational)) :: Int64))
@@ -57,7 +61,7 @@ routeRequest rconf request callProxy = do
                 newreq = request{WAI.requestHeaders=newheaders}
             in do
                 proxyStartTime <- getPOSIXTime
-                result <- try (callProxy $ WPRModifiedRequest newreq proxy)
+                result <- try (callProxy $ WPRModifiedRequest newreq proxy proxySettings)
                 proxyEndTime <- getPOSIXTime
                 case result of
                     Right res -> do
@@ -69,9 +73,9 @@ routeRequest rconf request callProxy = do
                 
         notFound = callProxy $ WPRResponse (WAI.responseLBS status404 [] "Route to host not found.")
         
-        routeToProxy (Route {routeHost,routePort,routeSockAddr=(N.SockAddrInet _ hostaddress)}) = 
+        routeToProxyDest (Route {routeHost,routePort,routeSockAddr=(N.SockAddrInet _ hostaddress)}) = 
                 ProxyDest routeHost routePort (Just hostaddress)
-        routeToProxy (Route {routeHost, routePort}) = 
+        routeToProxyDest (Route {routeHost, routePort}) = 
                 ProxyDest routeHost routePort Nothing
 
         -- We need to retype SomeException from RouteException back to normal exception; throw and catch it again
@@ -87,7 +91,7 @@ routeRequest rconf request callProxy = do
                     numroutes <- routeSize rconf uri
                     case numroutes of
                          1 -> 
-                            callProxy $ WPRResponse (WAI.responseLBS status502 [] "Timeouted contacting app agent.")
+                            callProxy $ WPRResponse (WAI.responseLBS status502 [] "Error when contacting app agent.")
                          _ -> do
                             -- Remove hostname from route table, if this is not the last route
                             routeDel rconf uri route
@@ -135,11 +139,5 @@ main = do
     let webSettings = setPort (msetPort settings) $ setNoParsePath True $ defaultSettings
     
     HC.withManager managerSettings $ \manager -> do
-        let app = waiProxyToSettings
-                (routeRequest rconf)
-                def{wpsOnExc=(\e -> throw e), 
-                    wpsTimeout=Just httpRequestTimeout,
-                    wpsSetIpHeader=SIHFromSocket "X-Forwarded-For"
-                }
-                manager :: WAI.Application
+        let app = waiProxyToSettings (routeRequest rconf) proxySettings manager
         runSettings webSettings app

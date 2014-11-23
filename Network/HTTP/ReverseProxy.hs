@@ -140,7 +140,7 @@ data WaiProxyResponse = WPRResponse WAI.Response
                         -- ^ Send to the given destination.
                         --
                         -- Since 0.2.0
-                      | WPRModifiedRequest WAI.Request ProxyDest
+                      | WPRModifiedRequest WAI.Request ProxyDest WaiProxySettings
                         -- ^ Send to the given destination, but use the given
                         -- modified Request for computing the reverse-proxied
                         -- request. This can be useful for reverse proxying to
@@ -198,9 +198,11 @@ data WaiProxySettings = WaiProxySettings
     -- Default: check if the upgrade header is websocket.
     --
     -- Since 0.3.1
+    , wpsProcessHeaders :: HT.RequestHeaders -> HT.RequestHeaders
+    -- ^ Post-process the response headers returned from the host
     }
 
--- | How to set the X-Real-IP/X- request header.
+-- | How to set the X-Real-IP/X- request header.HT.RequestHeaders
 --
 -- Since 0.2.0
 data SetIpHeader = SIHNone -- ^ Do not set the header
@@ -216,10 +218,12 @@ instance Default WaiProxySettings where
         , wpsUpgradeToRaw = \req ->
             let
                 hdr = lookup "upgrade" (WAI.requestHeaders req)
-                dwords = S8.split ',' <$> hdr
-                iswebsocket = any ((== "websocket") . CI.mk) <$> dwords
+                tokens = map CI.mk <$> S8.split ',' <$> hdr
+                result = elem "websocket" <$> tokens
             in
-                iswebsocket == Just True
+                result == Just True
+                
+        , wpsProcessHeaders = id
         }
 
 renderHeaders :: WAI.Request -> HT.RequestHeaders -> Builder
@@ -272,6 +276,9 @@ strippedHeadersToServer = Set.fromList ["transfer-encoding", "content-length", "
 strippedHeadersToClient :: Set HT.HeaderName
 strippedHeadersToClient = Set.fromList ["transfer-encoding"]
 
+stripClientHeaders :: HT.RequestHeaders -> HT.RequestHeaders
+stripClientHeaders = filter (\(key, _) -> not $ key `Set.member` strippedHeadersToClient)
+
 fixReqHeaders :: WaiProxySettings -> WAI.Request -> HT.RequestHeaders
 fixReqHeaders wps req =
     addXRealIP 
@@ -299,19 +306,19 @@ waiProxyToSettings :: (WAI.Request -> (WaiProxyResponse -> IO WAI.ResponseReceiv
                    -> WaiProxySettings
                    -> HC.Manager
                    -> WAI.Application
-waiProxyToSettings getDest wps manager req0 sendResponse = 
+waiProxyToSettings getDest wps' manager req0 sendResponse = 
     getDest req0 runProxy
     where 
         runProxy edest' = do
             let edest =
                     case edest' of
                         WPRResponse res -> Left $ \_req -> ($ res)
-                        WPRProxyDest pd -> Right (pd, req0)
-                        WPRModifiedRequest req pd -> Right (pd, req)
+                        WPRProxyDest pd -> Right (pd, req0, wps')
+                        WPRModifiedRequest req pd wps -> Right (pd, req, wps)
                         WPRApplication app -> Left app
             case edest of
                 Left app -> app req0 sendResponse
-                Right (ProxyDest host port hostaddress, req) -> tryWebSockets wps host port req sendResponse $ do
+                Right (ProxyDest host port hostaddress, req, wps) -> tryWebSockets wps host port req sendResponse $ do
                     let req' = def
                             { HC.method = WAI.requestMethod req
                             , HC.host = host
@@ -346,7 +353,7 @@ waiProxyToSettings getDest wps manager req0 sendResponse =
                                     src = bodyReaderSource $ HC.responseBody res
                                 sendResponse $ WAI.responseStream
                                     (HC.responseStatus res)
-                                    (filter (\(key, _) -> not $ key `Set.member` strippedHeadersToClient) $ HC.responseHeaders res)
+                                    (stripClientHeaders $ HC.responseHeaders res)
                                     (\sendChunk flush -> src $= conduit $$ CL.mapM_ (\mb ->
                                         case mb of
                                             Flush -> flush
