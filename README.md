@@ -15,26 +15,20 @@ What it can do:
     
 * Least connection loadbalancing with limiting maximum parallel requests 
   on each application instance. (local; not distributed)
-
-* Automatic removal of node that returns 'Connection refused' from the pool.
+  
+* Resonable behaviour when an app instance is unreachable
 
 What is planned:
 
-* The current http-client package uses 4K block, which makes it quite slow.
-  128K block makes it much faster, but will require a change in http-client.
+* Support for persistence (alghough I am unsure if the existence of 
+  jsessionid is a good way to support it)
 
-* Different timeouts for creating TCP connection to DEA and for response timeout
-  (faster recovery during failure).
-    
 * Reasonably compatibile YAML configuration file with gorouter.
     
 * Working logging system.
     
 * Endpoints /route and /varz.
     
-* Support for persistence (alghough I am unsure if the existence of 
-  jsessionid is a good way to support it)
-
 * distributed least connection loadbalancing
 
 * statistics that could help with deciding weather autoscaling is needed

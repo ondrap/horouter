@@ -62,11 +62,12 @@ makeVcapMsg settings iface now =
         seconds = iuptime `mod` 60
         uptime = printf "%dd:%dh:%dm:%ds" days hours minutes seconds
     in
+        -- TODO - publikovat credentials na stavovy web server
         VcapAnnounce{
             vcapType="Router",
             vcapIndex=msetIndex settings,
             vcapHost=SockAddrInet (fromIntegral $ msetPort settings) (toHostAddress iface),
-            vcapCredentials=(msetUser settings, msetPassword settings),
+            vcapCredentials=("", ""),
             vcapUuid=msetUUID settings,
             vcapStart=formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S %z" (msetStart settings),
             vcapUptime=uptime

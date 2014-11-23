@@ -6,6 +6,7 @@ module RouteConfig (
   , newRouteConfig
   , routeAdd
   , routeDel
+  , routeSize
   , purgeStaleRoutes
   , withBestRoute 
   , RouteException(..)
@@ -105,6 +106,14 @@ routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap 
 --             avail <- SEM.peekAvail (hostSemaphore hroute)
 --             putStrLn $ show avail
         
+-- | Count number of members in route
+routeSize :: RouteConfig -> BS.ByteString -> IO Int
+routeSize (RouteConfig {routeMap}) uri = do
+    rmap <- readMVar routeMap
+    case M.lookup (CI.mk uri) rmap of
+         Nothing -> return 0
+         Just hroute -> PQ.size $ hostRoutes hroute
+        
 routeDel :: RouteConfig 
     -> BS.ByteString    -- ^ Domain mapping
     -> Route            -- ^ IP address:port of instance
@@ -119,8 +128,10 @@ routeDel (RouteConfig {routeMap}) uri route = modifyMVar_ routeMap $ \rmap -> do
     where
         iuri = CI.mk uri
 
-        
--- deleteRouteFromMapping :: Route -> HostRoutes -> M.Map BS.ByteString HostRoute -> IO (M.Map BS.ByteString HostRoute)
+   
+deleteRouteFromMapping :: CI.CI BS.ByteString -> Route -> HostRoute 
+                        -> Int -> M.Map (CI.CI BS.ByteString) HostRoute 
+                        -> IO (M.Map (CI.CI BS.ByteString) HostRoute)
 deleteRouteFromMapping iuri route hroute limit rmap = do
     PQ.delete route (hostRoutes hroute)
     _ <- forkIO $ SEM.wait (hostSemaphore hroute) limit

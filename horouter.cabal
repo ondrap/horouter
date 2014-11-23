@@ -17,12 +17,38 @@ cabal-version:       >=1.8
 executable horouter
   main-is:             Main.hs
      
-  build-depends:       base ==4.6.*, network-info, bytestring, containers==0.5.*,PSQueue==1.1, 
-                       nats-queue, text, network >= 2, aeson>=0.7, transformers, http-types,
-                       wai==3.*, http-conduit>=2, warp==3.*, conduit-extra, conduit,
-                       lifted-base, blaze-builder, async, wai-logger, data-default-class,
-                       case-insensitive, word8, http-client>0.4.4, monad-control, streaming-commons,
-                       SafeSemaphore, convertible, time, uuid, iproute, old-locale
+  build-depends:       base == 4.6.*
+                     , network-info
+                     , bytestring
+                     , containers==0.5.*
+                     , PSQueue==1.1 
+                     , nats-queue
+                     , text
+                     , network >= 2
+                     , aeson >= 0.7
+                     , transformers
+                     , http-types
+                     , wai==3.*
+                     , http-conduit >= 2
+                     , warp==3.*
+                     , conduit-extra
+                     , conduit
+                     , lifted-base
+                     , blaze-builder
+                     , async
+                     , wai-logger
+                     , data-default-class
+                     , case-insensitive
+                     , word8
+                     , http-client >= 0.4.5, 
+                     , monad-control
+                     , streaming-commons
+                     , SafeSemaphore
+                     , convertible
+                     , time
+                     , uuid
+                     , iproute
+                     , old-locale
                        
   ghc-options:         -O2 -Wall
                        
