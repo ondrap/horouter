@@ -165,10 +165,10 @@ instance Exception RouteException
 -- | Run some code while ensuring correct counting of connections in queue
 withBestRoute :: RouteConfig 
     -> BS.ByteString 
+    -> IO a
     -> (Route -> IO a)
     -> IO a
-    -> IO a
-withBestRoute (RouteConfig {routeMap}) uri routeFound notFound = do
+withBestRoute (RouteConfig {routeMap}) uri notFound routeFound = do
     rmap <- readMVar routeMap
     case (M.lookup (CI.mk uri) rmap) of
         Nothing -> notFound
