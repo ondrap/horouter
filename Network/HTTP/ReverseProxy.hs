@@ -18,6 +18,7 @@ module Network.HTTP.ReverseProxy
     , wpsSetIpHeader
     , wpsProcessBody
     , wpsUpgradeToRaw
+    , wpsProcessHeaders
     , SetIpHeader (..)
     {- FIXME
       -- * WAI to Raw
@@ -362,9 +363,10 @@ waiDoProxy wps manager host port hostaddress req sendResponse =
                                 Nothing -> awaitForever (\bs -> yield (Chunk $ fromByteString bs) >> yield Flush)
                                 Just conduit' -> conduit'
                         src = bodyReaderSource $ HC.responseBody res
+                        
                     sendResponse $ WAI.responseStream
                         (HC.responseStatus res)
-                        (stripClientHeaders $ HC.responseHeaders res)
+                        (stripClientHeaders $ wpsProcessHeaders wps $ HC.responseHeaders res)
                         (\sendChunk flush -> src $= conduit $$ CL.mapM_ (\mb ->
                             case mb of
                                 Flush -> flush

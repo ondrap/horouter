@@ -11,6 +11,8 @@ import           Network.HTTP.Types           (status404, status502)
 import qualified Network.Socket as N
 import Control.Applicative ((<$>))
 import qualified Data.ByteString.Char8 as BS
+import qualified Network.HTTP.Types as HT
+import Web.Cookie (parseCookies, parseSetCookie, renderSetCookie, SetCookie(..))
 import Control.Exception
 import Data.Time.Clock (getCurrentTime)
 import Data.Convertible.Base (convert)
@@ -20,6 +22,7 @@ import Data.Int
 import Data.UUID.V4
 import Settings
 import System.Timeout
+import Blaze.ByteString.Builder as BLDR
 
 import RtrNats 
 import RouteConfig
@@ -38,8 +41,14 @@ httpRequestTimeout = 30 * 1000000
 httpChunkSize :: Int
 httpChunkSize = 128 * 1024
 
-proxySettings :: WaiProxySettings
-proxySettings = def{
+vcapCookieName :: BS.ByteString
+vcapCookieName = "__VCAP_ID__"
+
+stickyCookieName :: BS.ByteString
+stickyCookieName = "JSESSIONID"
+
+defProxySettings :: WaiProxySettings
+defProxySettings = def{
                     wpsOnExc=(\e -> throw e), 
                     wpsTimeout=Just httpRequestTimeout,
                     wpsSetIpHeader=SIHFromSocket "X-Forwarded-For"
@@ -47,10 +56,11 @@ proxySettings = def{
 
 routeRequest :: RouteConfig -> HC.Manager -> WAI.Application
 routeRequest rconf manager req sendResponse = do
-    let (Just uri) = BS.takeWhile (/= ':') <$> WAI.requestHeaderHost req
     requestStartTime <- getCurrentTime
+    let (Just uri) = BS.takeWhile (/= ':') <$> WAI.requestHeaderHost req
+        prefhost = getPrefHost req
     
-    (withBestRoute rconf uri Nothing notFound $ 
+    (withBestRoute rconf uri prefhost notFound $ 
         \(route@(Route {routeHost=host, routePort=port}), rtinfo@(RouteInfo {routeAppId=appid})) -> do
             let
                 haddr = routeToHostAddr rtinfo
@@ -59,6 +69,10 @@ routeRequest rconf manager req sendResponse = do
                         : ("X-Request-Start", BS.pack $ show (truncate (1000 * (convert requestStartTime :: Rational)) :: Int64))
                         : WAI.requestHeaders req
                 newreq = req{WAI.requestHeaders=newheaders}
+                proxySettings = defProxySettings {
+                    wpsProcessHeaders = (addVcapId route)
+                }
+                
             proxyStartTime <- getCurrentTime
             result <- try (waiDoProxy proxySettings manager host port haddr newreq sendResponse)
             proxyEndTime <- getCurrentTime
@@ -71,11 +85,42 @@ routeRequest rconf manager req sendResponse = do
                     throwIO e
         ) `catch` (excConnFailed uri)
     where
+        -- What happens when there is no mapping
         notFound = sendResponse $ WAI.responseLBS status404 [] "Route to host not found."
         
         routeToHostAddr (RouteInfo {routeSockAddr=(N.SockAddrInet _ hostaddress)}) = Just hostaddress
         routeToHostAddr _ = Nothing
+        
+        -- Add cookie __VCAP_ID__ to headers if session cookie is present
+        addVcapId :: Route -> HT.RequestHeaders -> HT.RequestHeaders
+        addVcapId (Route host port) headers = 
+            if hasSticky
+                then (("Set-Cookie", render cookie):headers)
+                else headers 
+            where
+                render = BLDR.toByteString . renderSetCookie
+                hasSticky = not $ null stickyCookies
+                setcookies = map (parseSetCookie . snd) $ filter (\hdr -> fst hdr == "set-cookie") headers
+                stickyCookies = filter ((== stickyCookieName) . setCookieName) setcookies
+                cookie = def {
+                    setCookieName = vcapCookieName,
+                    setCookieValue = BS.concat [host, BS.pack (':':(show port))],
+                    setCookieHttpOnly = True,
+                    setCookiePath = Just "/"
+                }
+            
+                                               
+        -- Try to decide for a preferred host if both stickyCookieName and vcapCookieName exist
+        getPrefHost req = do -- Maybe Monad
+            cookies <- parseCookies <$> lookup "cookie" (WAI.requestHeaders req)
+            _ <- lookup stickyCookieName cookies -- Exit function if this fails
+            prefcookie <- lookup vcapCookieName cookies
+            let (host, sport) = BS.span (/=':') prefcookie
+            case (reads $ drop 1 $ BS.unpack sport) of
+                    ((port, _):_) -> Just (Route host port)
+                    _             -> Nothing
 
+        -- This happens when an exception happens
         -- We need to retype SomeException from RouteException back to normal exception; throw and catch it again
         excConnFailed uri (RouteException route exception) = 
             (throwIO exception) 

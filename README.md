@@ -18,10 +18,9 @@ What it can do:
   
 * Resonable behaviour when an app instance is unreachable
 
-What is planned:
+* Support for persistence (based on existence of JSESSIONID cookie)
 
-* Support for persistence (alghough I am unsure if the existence of 
-  jsessionid is a good way to support it)
+What is planned:
 
 * Reasonably compatibile YAML configuration file with gorouter.
     

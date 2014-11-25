@@ -27,6 +27,7 @@ import Data.Time.Clock (getCurrentTime)
 
 import RouteConfig
 import Settings
+import Utils
 
 defaultParallelLimit :: Int
 defaultParallelLimit = 20
@@ -52,6 +53,7 @@ data RtrRegister = RtrRegister {
       , rtrPort :: Int
       , rtrParallelLimit :: Int
       , rtrApp :: BS.ByteString
+      , rtrPrivateInstanceId :: BS.ByteString
     } deriving (Show)
     
 instance FromJSON BS.ByteString where
@@ -61,7 +63,7 @@ instance FromJSON BS.ByteString where
 instance ToJSON BS.ByteString where
     toJSON str = AE.String $ decodeUtf8 str
 
-$(deriveToJSON defaultOptions{fieldLabelModifier=(\(c:cs) -> (toLower c):cs) . drop 3} ''RtrRegister)
+$(deriveToJSON defaultOptions{fieldLabelModifier=(camelTo_ . drop 3)} ''RtrRegister)
 instance FromJSON RtrRegister where
     parseJSON (AE.Object v) =
         RtrRegister <$>
@@ -69,8 +71,9 @@ instance FromJSON RtrRegister where
             v .: "tags" .!= Map.empty <*>
             v .: "host" <*>
             v .: "port" <*>
-            v .: "parallelLimit" .!= defaultParallelLimit <*>
-            v .: "app" .!= ""
+            v .: "parallel_limit" .!= defaultParallelLimit <*>
+            v .: "app" .!= "" <*>
+            v .: "private_instance_id" .!= ""
     parseJSON _ = mzero
     
 getExternalIPs :: IO [IPv4]
@@ -132,22 +135,22 @@ startNatsService rconf settings = do
             publish nats "router.start" msg
         
 
-registerWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> Int -> BS.ByteString -> IO ()
-registerWebService natsurl uris host port limit appid = do
+registerWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> Int -> BS.ByteString -> BS.ByteString -> IO ()
+registerWebService natsurl uris host port limit appid instid = do
     bracket
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.register" $ RtrRegister uris Map.empty host port limit appid
+            publish nats "router.register" $ RtrRegister uris Map.empty host port limit appid instid
         )
 
-unregisterWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> BS.ByteString -> IO ()
-unregisterWebService natsurl uris host port appid = do
+unregisterWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> BS.ByteString -> BS.ByteString -> IO ()
+unregisterWebService natsurl uris host port appid instid = do
     bracket
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid
+            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid instid
         )
 
         

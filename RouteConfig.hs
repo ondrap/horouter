@@ -192,8 +192,9 @@ withBestRoute rconf uri (Just prefroute) notFound routeFound = do
             (PQ.getRouteAndPlus1 hostRoutes prefroute)
             (maybe (return ()) PQ.itemMinus1)
             (\item -> case item of
-                        Nothing -> withBestRoute rconf uri Nothing notFound routeFound -- Failback
-                        Just item -> 
+                        Nothing ->
+                            withBestRoute rconf uri Nothing notFound routeFound -- Failback
+                        Just item ->
                             routeFound (PQ.valueOf item) `catch` (throwIO . RouteException prefroute)
             )
     
