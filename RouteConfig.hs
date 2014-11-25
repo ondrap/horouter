@@ -3,6 +3,7 @@
 module RouteConfig (
     RouteConfig
   , Route(..)
+  , RouteInfo(..)
   , newRouteConfig
   , routeAdd
   , routeDel
@@ -32,30 +33,31 @@ import Control.Monad.Trans.Class (lift)
 defaultStaleInterval :: Int
 defaultStaleInterval = 120
 
+-- | Information identifying the route
 data Route = Route {
         routeHost :: BS.ByteString 
       , routePort :: Int 
-      , routeSockAddr :: N.SockAddr 
+    } deriving (Eq, Ord)
+    
+-- | Additional information for the route
+data RouteInfo = RouteInfo {
+        routeSockAddr :: N.SockAddr 
       , routeAppId :: BS.ByteString
       , routeRegTime :: UTCTime
     }
+    
 -- Allow N.SockAddr to be undefined for some operations
 instance Show Route where
     show (Route {routeHost, routePort}) = (BS.unpack routeHost) ++ ":" ++ (show routePort)
 
--- Ignore hostaddress when comparing
-instance Eq Route where
-    (Route {routeHost=h1,routePort=p1}) == (Route {routeHost=h2,routePort=p2}) = (h1, p1) == (h2, p2)
-instance Ord Route where
-    (Route {routeHost=h1,routePort=p1}) `compare` (Route {routeHost=h2,routePort=p2}) = (h1, p1) `compare` (h2, p2)
-
 data HostRoute = HostRoute {
-        hostRoutes :: PQ.Queue Route
+        hostRoutes :: PQ.Queue Route RouteInfo
       , hostSemaphore :: SEM.MSemN Int
     }
     
+type RouteMap = MVar (M.Map (CI.CI BS.ByteString) HostRoute)
 data RouteConfig = RouteConfig {
-        routeMap :: MVar (M.Map (CI.CI BS.ByteString) HostRoute)
+        routeMap :: RouteMap
     }
 
 -- TODO: pruning po 2 minutach
@@ -65,12 +67,13 @@ newRouteConfig = RouteConfig <$> newMVar M.empty
 
 routeAdd :: RouteConfig 
     -> BS.ByteString  -- ^ Domain mapping
-    -> Route          -- ^ IP address:port of instance + some info
+    -> Route          -- ^ IP address:port of instance
+    -> RouteInfo    -- ^ Additional 'mutable' information for route
     -> Int            -- ^ Maximum parallel operations on this route
     -> IO ()
-routeAdd _ _ _ limit
+routeAdd _ _ _ _ limit
     | limit <= 0 = putStrLn "Incorrect parallelism limit"
-routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap -> do
+routeAdd (RouteConfig {routeMap}) uri addr rtinfo limit = modifyMVar_ routeMap $ \rmap -> do
     putStrLn $ "Registering web service: " ++ (show uri) ++ " -> " ++ (show addr) ++ " parallel limit: " ++ (show limit)
     case (M.lookup iuri rmap) of
         Just hroute -> do
@@ -80,7 +83,7 @@ routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap 
             case moldlimit of
                     Nothing -> do
                         SEM.signal hsem limit
-                        PQ.insert (0, addr) limit hq
+                        PQ.insert (0, addr, rtinfo) limit hq
                         return ()
                     Just oldlimit -> do
                         -- Update limit of an item if it is different
@@ -91,7 +94,7 @@ routeAdd (RouteConfig {routeMap}) uri addr limit = modifyMVar_ routeMap $ \rmap 
             return rmap
         Nothing -> do
             q <- PQ.newQueue
-            PQ.insert (0, addr) limit q
+            PQ.insert (0, addr, rtinfo) limit q
             msem <- SEM.new limit
             return $ M.insert iuri (HostRoute q msem) rmap
     where
@@ -122,7 +125,7 @@ routeDel (RouteConfig {routeMap}) uri route = modifyMVar_ routeMap $ \rmap -> do
     putStrLn $ "Unregistering web service: " ++ (show uri) ++ " -> " ++ (show route)
     newmap <- runMaybeT $ do
         hroute <- MaybeT (return $ M.lookup iuri rmap)
-        (_, limit) <- MaybeT $ PQ.lookup route (hostRoutes hroute)
+        (_, limit, _) <- MaybeT $ PQ.lookup route (hostRoutes hroute)
         lift $ deleteRouteFromMapping iuri route hroute limit rmap
     return $ maybe rmap id newmap
     where
@@ -161,24 +164,50 @@ purgeStaleRoutes rconf@(RouteConfig {routeMap=mRouteMap}) = forever $ do
 data RouteException = RouteException Route SomeException
     deriving (Show, Typeable)
 instance Exception RouteException
-        
--- | Run some code while ensuring correct counting of connections in queue
-withBestRoute :: RouteConfig 
-    -> BS.ByteString 
-    -> IO a
-    -> (Route -> IO a)
-    -> IO a
-withBestRoute (RouteConfig {routeMap}) uri notFound routeFound = do
+
+-- | Find HostRoute entry in routeMap, call notFound if not found
+findHostRoute :: RouteConfig -> BS.ByteString -> IO a -> (HostRoute -> IO a) -> IO a
+findHostRoute (RouteConfig {routeMap}) uri notFound routeFound = do
     rmap <- readMVar routeMap
     case (M.lookup (CI.mk uri) rmap) of
         Nothing -> notFound
-        Just (HostRoute {hostRoutes, hostSemaphore}) -> do
-            SEM.with hostSemaphore 1 $ 
-                bracket
-                    (PQ.getMinAndPlus1 hostRoutes)
-                    (maybe (return ()) PQ.itemMinus1)
-                    (maybe notFound $
-                        \item -> let route = PQ.valueOf item
-                                 in routeFound route -- MAIN CALL of the code
-                                    `catch` (throwIO . RouteException route)
-                    )
+        Just x -> routeFound x
+
+-- | Run some code while ensuring correct counting of connections in queue
+withBestRoute :: RouteConfig       -- ^ Shared routing information
+    -> BS.ByteString               -- ^ Hostname to route
+    -> Maybe (BS.ByteString, Int)  -- ^ Preferred hostname/port
+    -> IO a                        -- ^ Call if no route found
+    -> (Route -> RouteInfo -> IO a)             -- ^ Call if route found
+    -> IO a                        -- ^ Result
+    
+-- Try to route according to preferred host/port; if none is found, 
+-- failback to leastconn.
+-- We do not count the persistent connections against total connections semaphore,
+-- as this is a sum of connections to each agent; number of persistent connections
+-- could exceed a maximum for each agent and the semaphore wouldn't behave correctly
+withBestRoute rconf uri (Just (prefhost, prefport)) notFound routeFound = do
+    withBestRoute rconf uri Nothing notFound routeFound -- Failback
+--     findHostRoute rconf uri notFound $ \(HostRoute {hostRoutes, hostSemaphore}) -> do
+--         bracket
+--             (PQ.getRouteAndPlus1 hostRoutes (prefhost, prefport))
+--             (maybe (return ()) PQ.itemMinus1)
+--             (\item -> case item of
+--                         Nothing -> withBestRoute rconf uri Nothing notFound routeFound -- Failback
+--                         Just item -> let route = PQ.valueOf item
+--                                      in routeFound route
+--                                         `catch` (throwIO . RouteException route) -- Reclass the exception and add the 'Route' parameter
+--             )
+    
+-- Route with least_conn
+withBestRoute rconf uri Nothing notFound routeFound = do
+    findHostRoute rconf uri notFound $ \(HostRoute {hostRoutes, hostSemaphore}) -> do
+        SEM.with hostSemaphore 1 $ 
+            bracket
+                (PQ.getMinAndPlus1 hostRoutes)
+                (maybe (return ()) PQ.itemMinus1)
+                (maybe notFound $
+                    \item -> let (route, rtinfo) = PQ.valueOf item
+                             in routeFound route rtinfo -- MAIN CALL of the code
+                                `catch` (throwIO . RouteException route)
+                )

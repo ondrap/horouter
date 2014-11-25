@@ -104,13 +104,14 @@ handleRegister rconf _ _ (RtrRegister {..}) _ = do
         -- We support at most 1 address for the endpoint
         if null addrs 
            then return ()
-           else let route = Route rtrHost rtrPort (NS.addrAddress $ head addrs) rtrApp now
-                in routeAdd rconf uri route rtrParallelLimit
+           else let route = Route rtrHost rtrPort 
+                    rtinfo = RouteInfo (NS.addrAddress $ head addrs) rtrApp now
+                in routeAdd rconf uri route rtinfo rtrParallelLimit
 
 handleUnregister :: RouteConfig -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
 handleUnregister rconf _ _ (RtrRegister {..}) _  = 
     forM_ rtrUris $ \uri -> 
-        routeDel rconf uri (Route rtrHost rtrPort undefined rtrApp undefined)
+        routeDel rconf uri (Route rtrHost rtrPort)
         
 startNatsService :: RouteConfig -> MainSettings -> IO NATS.Nats
 startNatsService rconf settings = do

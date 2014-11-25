@@ -31,6 +31,6 @@ What is planned:
     
 * distributed least connection loadbalancing
 
-* statistics that could help with deciding weather autoscaling is needed
+* statistics that could help with deciding if autoscaling is needed
     
 * application to view these statistics

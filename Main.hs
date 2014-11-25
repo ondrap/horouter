@@ -49,10 +49,11 @@ routeRequest :: RouteConfig -> HC.Manager -> WAI.Application
 routeRequest rconf manager req sendResponse = do
     let (Just uri) = BS.takeWhile (/= ':') <$> WAI.requestHeaderHost req
     requestStartTime <- getCurrentTime
-    (withBestRoute rconf uri notFound $ 
-        \route@(Route {routeHost=host, routePort=port, routeAppId=appid}) -> do
+    
+    (withBestRoute rconf uri Nothing notFound $ 
+        \route@(Route {routeHost=host, routePort=port}) rtinfo@(RouteInfo {routeAppId=appid}) -> do
             let
-                haddr = routeToHostAddr route
+                haddr = routeToHostAddr rtinfo
                 newheaders = ("X-Cf-Applicationid", appid)
                         : ("X-Cf-Instanceid", BS.concat [host, ":", (BS.pack $ show port)])
                         : ("X-Request-Start", BS.pack $ show (truncate (1000 * (convert requestStartTime :: Rational)) :: Int64))
@@ -72,7 +73,7 @@ routeRequest rconf manager req sendResponse = do
     where
         notFound = sendResponse $ WAI.responseLBS status404 [] "Route to host not found."
         
-        routeToHostAddr (Route {routeSockAddr=(N.SockAddrInet _ hostaddress)}) = Just hostaddress
+        routeToHostAddr (RouteInfo {routeSockAddr=(N.SockAddrInet _ hostaddress)}) = Just hostaddress
         routeToHostAddr _ = Nothing
 
         -- We need to retype SomeException from RouteException back to normal exception; throw and catch it again
