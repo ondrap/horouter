@@ -51,7 +51,7 @@ routeRequest rconf manager req sendResponse = do
     requestStartTime <- getCurrentTime
     
     (withBestRoute rconf uri Nothing notFound $ 
-        \route@(Route {routeHost=host, routePort=port}) rtinfo@(RouteInfo {routeAppId=appid}) -> do
+        \(route@(Route {routeHost=host, routePort=port}), rtinfo@(RouteInfo {routeAppId=appid})) -> do
             let
                 haddr = routeToHostAddr rtinfo
                 newheaders = ("X-Cf-Applicationid", appid)

@@ -4,6 +4,7 @@ module PrioQueue (
   , newQueue
   , valueOf
   , getMinAndPlus1
+  , getRouteAndPlus1 
   , itemMinus1
   , insert
   , delete
@@ -59,18 +60,15 @@ getMinAndPlus1 iq@(Queue ioref) = atomicModifyIORef' ioref $ \q ->
             in
                 (resqueue, Just $ Item iq (PQ.key binding) dta)
          Nothing -> (q, Nothing)
-            
-            
--- getRouteAndPlus1 :: (Ord v) => Queue v d -> v -> IO (Maybe (Item v d))
--- getRouteAndPlus1 iq@(Queue ioref) k = atomicModifyIORef' ioref $ \q ->
---     case PQ.lookup k q of
---          Just (Priority prio limit _) -> 
---             let
---                 resqueue = PQ.adjust incPriority k q
---             in
---                 (resqueue, Just $ Item iq )
---          Nothing -> return Nothing
-    
+
+-- | Get route by preferred item
+getRouteAndPlus1 :: (Ord v) => Queue v d -> v -> IO (Maybe (Item v d))
+getRouteAndPlus1 iq@(Queue ioref) k = atomicModifyIORef' ioref $ \q ->
+    case PQ.lookup k q of
+         Just (Priority prio limit dta) -> 
+            let resqueue = PQ.adjust incPriority k q
+            in (resqueue, Just $ Item iq k dta)
+         Nothing -> (q, Nothing)
             
 -- | Update priority of item with (-1) (resort in the queue)
 itemMinus1 :: (Ord v) => Item v d -> IO ()

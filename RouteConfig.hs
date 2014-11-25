@@ -73,17 +73,17 @@ routeAdd :: RouteConfig
     -> IO ()
 routeAdd _ _ _ _ limit
     | limit <= 0 = putStrLn "Incorrect parallelism limit"
-routeAdd (RouteConfig {routeMap}) uri addr rtinfo limit = modifyMVar_ routeMap $ \rmap -> do
-    putStrLn $ "Registering web service: " ++ (show uri) ++ " -> " ++ (show addr) ++ " parallel limit: " ++ (show limit)
+routeAdd (RouteConfig {routeMap}) uri route rtinfo limit = modifyMVar_ routeMap $ \rmap -> do
+    putStrLn $ "Registering web service: " ++ (show uri) ++ " -> " ++ (show route) ++ " parallel limit: " ++ (show limit)
     case (M.lookup iuri rmap) of
         Just hroute -> do
             let hq = hostRoutes hroute
                 hsem = hostSemaphore hroute
-            moldlimit <- PQ.adjustLimit addr limit hq
+            moldlimit <- PQ.adjustLimit route limit hq
             case moldlimit of
                     Nothing -> do
                         SEM.signal hsem limit
-                        PQ.insert (0, addr, rtinfo) limit hq
+                        PQ.insert (0, route, rtinfo) limit hq
                         return ()
                     Just oldlimit -> do
                         -- Update limit of an item if it is different
@@ -94,7 +94,7 @@ routeAdd (RouteConfig {routeMap}) uri addr rtinfo limit = modifyMVar_ routeMap $
             return rmap
         Nothing -> do
             q <- PQ.newQueue
-            PQ.insert (0, addr, rtinfo) limit q
+            PQ.insert (0, route, rtinfo) limit q
             msem <- SEM.new limit
             return $ M.insert iuri (HostRoute q msem) rmap
     where
@@ -176,9 +176,9 @@ findHostRoute (RouteConfig {routeMap}) uri notFound routeFound = do
 -- | Run some code while ensuring correct counting of connections in queue
 withBestRoute :: RouteConfig       -- ^ Shared routing information
     -> BS.ByteString               -- ^ Hostname to route
-    -> Maybe (BS.ByteString, Int)  -- ^ Preferred hostname/port
+    -> Maybe Route -- ^ Preferred hostname/port
     -> IO a                        -- ^ Call if no route found
-    -> (Route -> RouteInfo -> IO a)             -- ^ Call if route found
+    -> ((Route, RouteInfo) -> IO a)             -- ^ Call if route found
     -> IO a                        -- ^ Result
     
 -- Try to route according to preferred host/port; if none is found, 
@@ -186,18 +186,16 @@ withBestRoute :: RouteConfig       -- ^ Shared routing information
 -- We do not count the persistent connections against total connections semaphore,
 -- as this is a sum of connections to each agent; number of persistent connections
 -- could exceed a maximum for each agent and the semaphore wouldn't behave correctly
-withBestRoute rconf uri (Just (prefhost, prefport)) notFound routeFound = do
-    withBestRoute rconf uri Nothing notFound routeFound -- Failback
---     findHostRoute rconf uri notFound $ \(HostRoute {hostRoutes, hostSemaphore}) -> do
---         bracket
---             (PQ.getRouteAndPlus1 hostRoutes (prefhost, prefport))
---             (maybe (return ()) PQ.itemMinus1)
---             (\item -> case item of
---                         Nothing -> withBestRoute rconf uri Nothing notFound routeFound -- Failback
---                         Just item -> let route = PQ.valueOf item
---                                      in routeFound route
---                                         `catch` (throwIO . RouteException route) -- Reclass the exception and add the 'Route' parameter
---             )
+withBestRoute rconf uri (Just prefroute) notFound routeFound = do
+    findHostRoute rconf uri notFound $ \(HostRoute {hostRoutes, hostSemaphore}) -> do
+        bracket
+            (PQ.getRouteAndPlus1 hostRoutes prefroute)
+            (maybe (return ()) PQ.itemMinus1)
+            (\item -> case item of
+                        Nothing -> withBestRoute rconf uri Nothing notFound routeFound -- Failback
+                        Just item -> 
+                            routeFound (PQ.valueOf item) `catch` (throwIO . RouteException prefroute)
+            )
     
 -- Route with least_conn
 withBestRoute rconf uri Nothing notFound routeFound = do
@@ -207,7 +205,6 @@ withBestRoute rconf uri Nothing notFound routeFound = do
                 (PQ.getMinAndPlus1 hostRoutes)
                 (maybe (return ()) PQ.itemMinus1)
                 (maybe notFound $
-                    \item -> let (route, rtinfo) = PQ.valueOf item
-                             in routeFound route rtinfo -- MAIN CALL of the code
-                                `catch` (throwIO . RouteException route)
+                    \item -> let (route, _) = PQ.valueOf item
+                             in routeFound (PQ.valueOf item) `catch` (throwIO . RouteException route)
                 )
