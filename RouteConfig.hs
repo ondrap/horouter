@@ -11,7 +11,6 @@ module RouteConfig (
   , pruneStaleRoutes
   , withBestRoute 
   , RouteException(..)
-  , defaultStaleInterval
 ) where
     
 import qualified PrioQueue as PQ
@@ -26,12 +25,11 @@ import qualified Network.Socket as N
 import Data.Typeable
 import qualified Control.Concurrent.MSemN as SEM
 import Data.Time.Clock (UTCTime, getCurrentTime)
-import Control.Monad (forever)
+import Control.Monad (forever, foldM)
 import Control.Monad.Trans.Maybe (runMaybeT, MaybeT(..))
 import Control.Monad.Trans.Class (lift)
 
-defaultStaleInterval :: Int
-defaultStaleInterval = 120
+import Settings
 
 -- | Information identifying the route
 data Route = Route {
@@ -124,19 +122,20 @@ routeDel (RouteConfig {routeMap}) uri route = modifyMVar_ routeMap $ \rmap -> do
     newmap <- runMaybeT $ do
         hroute <- MaybeT (return $ M.lookup iuri rmap)
         (_, limit, _) <- MaybeT $ PQ.lookup route (hostRoutes hroute)
-        lift $ deleteRouteFromMapping iuri route hroute limit rmap
+        -- Remove from mapping
+        lift $ PQ.delete route (hostRoutes hroute)
+        _ <- lift $ forkIO $ SEM.wait (hostSemaphore hroute) limit
+        lift $ updateEmptyMapping iuri hroute rmap
     return $ maybe rmap id newmap
     where
         iuri = CI.mk uri
 
    
-deleteRouteFromMapping :: CI.CI BS.ByteString -> Route -> HostRoute 
-                        -> Int -> M.Map (CI.CI BS.ByteString) HostRoute 
+-- | Remove entry from routeMap if there are no remaining routes
+updateEmptyMapping :: CI.CI BS.ByteString -> HostRoute 
+                        -> M.Map (CI.CI BS.ByteString) HostRoute 
                         -> IO (M.Map (CI.CI BS.ByteString) HostRoute)
-deleteRouteFromMapping iuri route hroute limit rmap = do
-    PQ.delete route (hostRoutes hroute)
-    _ <- forkIO $ SEM.wait (hostSemaphore hroute) limit
-    
+updateEmptyMapping iuri hroute rmap = do
     size <- PQ.size $ hostRoutes hroute
     case size of
         0 -> do
@@ -148,16 +147,17 @@ deleteRouteFromMapping iuri route hroute limit rmap = do
             return rmap
     
         
-pruneStaleRoutes :: RouteConfig -> IO ()
-pruneStaleRoutes rconf@(RouteConfig {routeMap=mRouteMap}) = forever $ do
+pruneStaleRoutes :: MainSettings -> RouteConfig -> IO ()
+pruneStaleRoutes settings rconf@(RouteConfig {routeMap=mRouteMap}) = forever $ do
     now <- getCurrentTime
-    threadDelay (defaultStaleInterval * 1000000)
---     modifyMVar_ mRoutMap $ \rmap -> do
---         newmap <- foldM (removeStale now) rmap (M.toList rmap)
--- 
--- removeStale now rmap (uri, hostRoutes) = do
-     
-            
+    threadDelay $ (msetPruneStaleDropletsInterval settings) * seconds
+    modifyMVar_ mRouteMap $ \rmap -> do
+        foldM (removeStale now) rmap (M.toList rmap)
+        
+    where
+        removeStale now rmap (uri, hroute) = do
+            PQ.removeBy (\(rt, dta) -> (routeExpireTime dta) < now) (hostRoutes hroute)
+            updateEmptyMapping uri hroute rmap
         
 data RouteException = RouteException Route SomeException
     deriving (Show, Typeable)

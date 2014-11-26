@@ -85,6 +85,8 @@ getExternalIPs = (map (fromHostAddress . (\(NetInfo.IPv4 x) -> x) . NetInfo.ipv4
         isExternal (NetInfo.NetworkInterface {ipv4=(NetInfo.IPv4 0)}) = False
         isExternal _ = True
     
+    
+-- | TODO - 
 localRtrStartMsg :: String -> IO RtrStart
 localRtrStartMsg uuid = RtrStart <$> pure uuid <*> getExternalIPs <*> pure defaultStaleInterval
     
@@ -95,12 +97,11 @@ answerGreet _ _ _ _ _ _ = return ()
 handleRegister :: RouteConfig -> MainSettings -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
 handleRegister rconf settings _ _ (RtrRegister {..}) _ = do
     now <- getCurrentTime
-    let defaultStale = fromIntegral $ msetPruneStaleDropletsInterval settings 
+    let defaultStale = fromIntegral $ msetDropletStaleThreshold settings 
         expireTime = case () of
             _ | (Just stale) <- rtrStaleThresholdInSeconds, (fromIntegral stale) < defaultStale
                      -> (fromIntegral stale) `addUTCTime` now
               | True -> defaultStale `addUTCTime` now
-    
     forM_ rtrUris $ \uri -> do
         -- Resolve address
         let hints = NS.defaultHints {
@@ -136,7 +137,7 @@ startNatsService rconf settings = do
     _ <- subscribe nats "router.unregister" Nothing (handleUnregister rconf)
     publish nats "router.start" rtrstartmsg
     
-    _ <- forkIO $ pruneStaleRoutes rconf
+    _ <- forkIO $ pruneStaleRoutes settings rconf
     return nats
     where
         onReconnect msg nats _ = do
@@ -149,7 +150,7 @@ registerWebService natsurl uris host port limit appid instid = do
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.register" $ RtrRegister uris Map.empty host port limit appid instid (Just 30)
+            publish nats "router.register" $ RtrRegister uris Map.empty host port limit appid instid Nothing
         )
 
 unregisterWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> BS.ByteString -> BS.ByteString -> IO ()
@@ -158,7 +159,7 @@ unregisterWebService natsurl uris host port appid instid = do
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid instid (Just 30)
+            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid instid Nothing
         )
 
         
