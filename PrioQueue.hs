@@ -45,6 +45,7 @@ valueOf (Item _ v d) = (v, d)
 newQueue :: (Ord v) => IO (Queue v d)
 newQueue = Queue <$> newIORef PQ.empty 
 
+incPriority :: Priority d -> Priority d
 incPriority (Priority priority limit dt)
     | priority + 1 == limit = Priority sentinelPriority limit dt
     | True                  = Priority (priority + 1) limit dt
@@ -65,7 +66,7 @@ getMinAndPlus1 iq@(Queue ioref) = atomicModifyIORef' ioref $ \q ->
 getRouteAndPlus1 :: (Ord v) => Queue v d -> v -> IO (Maybe (Item v d))
 getRouteAndPlus1 iq@(Queue ioref) k = atomicModifyIORef' ioref $ \q ->
     case PQ.lookup k q of
-         Just (Priority prio limit dta) -> 
+         Just (Priority _ _ dta) -> 
             let resqueue = PQ.adjust incPriority k q
             in (resqueue, Just $ Item iq k dta)
          Nothing -> (q, Nothing)

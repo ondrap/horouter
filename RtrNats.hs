@@ -23,7 +23,7 @@ import qualified Data.Text as T
 import Data.Text.Encoding (encodeUtf8, decodeUtf8)
 import qualified Network.Nats as NATS
 import Network.Nats.Json
-import Data.Time.Clock (getCurrentTime)
+import Data.Time.Clock (getCurrentTime, addUTCTime)
 
 import RouteConfig
 import Settings
@@ -54,6 +54,7 @@ data RtrRegister = RtrRegister {
       , rtrParallelLimit :: Int
       , rtrApp :: BS.ByteString
       , rtrPrivateInstanceId :: BS.ByteString
+      , rtrStaleThresholdInSeconds :: Maybe Int
     } deriving (Show)
     
 instance FromJSON BS.ByteString where
@@ -73,7 +74,8 @@ instance FromJSON RtrRegister where
             v .: "port" <*>
             v .: "parallel_limit" .!= defaultParallelLimit <*>
             v .: "app" .!= "" <*>
-            v .: "private_instance_id" .!= ""
+            v .: "private_instance_id" .!= "" <*>
+            v .: "stale_threshold_in_seconds"
     parseJSON _ = mzero
     
 getExternalIPs :: IO [IPv4]
@@ -90,9 +92,15 @@ answerGreet :: NATS.Nats -> RtrStart -> NATS.MsgCallback
 answerGreet nats rtstart _ _ _ (Just reply) = publish nats reply rtstart
 answerGreet _ _ _ _ _ _ = return ()
 
-handleRegister :: RouteConfig -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
-handleRegister rconf _ _ (RtrRegister {..}) _ = do
+handleRegister :: RouteConfig -> MainSettings -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
+handleRegister rconf settings _ _ (RtrRegister {..}) _ = do
     now <- getCurrentTime
+    let defaultStale = fromIntegral $ msetPruneStaleDropletsInterval settings 
+        expireTime = case () of
+            _ | (Just stale) <- rtrStaleThresholdInSeconds, (fromIntegral stale) < defaultStale
+                     -> (fromIntegral stale) `addUTCTime` now
+              | True -> defaultStale `addUTCTime` now
+    
     forM_ rtrUris $ \uri -> do
         -- Resolve address
         let hints = NS.defaultHints {
@@ -108,7 +116,7 @@ handleRegister rconf _ _ (RtrRegister {..}) _ = do
         if null addrs 
            then return ()
            else let route = Route rtrHost rtrPort 
-                    rtinfo = RouteInfo (NS.addrAddress $ head addrs) rtrApp now
+                    rtinfo = RouteInfo (NS.addrAddress $ head addrs) rtrApp expireTime
                 in routeAdd rconf uri route rtinfo rtrParallelLimit
 
 handleUnregister :: RouteConfig -> NATS.NatsSID -> String -> RtrRegister -> Maybe String -> IO ()
@@ -120,18 +128,18 @@ startNatsService :: RouteConfig -> MainSettings -> IO NATS.Nats
 startNatsService rconf settings = do
     rtrstartmsg <- localRtrStartMsg (msetUUID settings)
     nats <- NATS.connectSettings NATS.defaultSettings{
-            NATS.natsOnConnect=(onConnect rtrstartmsg)
+            NATS.natsOnReconnect=(onReconnect rtrstartmsg)
         }
         
     _ <- NATS.subscribe nats "router.greet" Nothing (answerGreet nats rtrstartmsg)
-    _ <- subscribe nats "router.register" Nothing (handleRegister rconf)
+    _ <- subscribe nats "router.register" Nothing (handleRegister rconf settings)
     _ <- subscribe nats "router.unregister" Nothing (handleUnregister rconf)
     publish nats "router.start" rtrstartmsg
     
-    _ <- forkIO $ purgeStaleRoutes rconf
+    _ <- forkIO $ pruneStaleRoutes rconf
     return nats
     where
-        onConnect msg nats _ = do
+        onReconnect msg nats _ = do
             publish nats "router.start" msg
         
 
@@ -141,7 +149,7 @@ registerWebService natsurl uris host port limit appid instid = do
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.register" $ RtrRegister uris Map.empty host port limit appid instid
+            publish nats "router.register" $ RtrRegister uris Map.empty host port limit appid instid (Just 30)
         )
 
 unregisterWebService :: String -> [BS.ByteString] -> BS.ByteString -> Int -> BS.ByteString -> BS.ByteString -> IO ()
@@ -150,7 +158,7 @@ unregisterWebService natsurl uris host port appid instid = do
         (NATS.connect natsurl)
         NATS.disconnect
         (\nats ->
-            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid instid
+            publish nats "router.unregister" $ RtrRegister uris Map.empty host port 0 appid instid (Just 30)
         )
 
         

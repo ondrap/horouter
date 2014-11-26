@@ -4,6 +4,7 @@ module Utils (
     
 import Data.Char (toLower, isUpper)
 
+camelTo_ :: String -> String
 camelTo_ = map toLower . drop 1 . reverse . foldl insertUnderscore []
     where
         insertUnderscore acc chr

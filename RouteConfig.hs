@@ -8,7 +8,7 @@ module RouteConfig (
   , routeAdd
   , routeDel
   , routeSize
-  , purgeStaleRoutes
+  , pruneStaleRoutes
   , withBestRoute 
   , RouteException(..)
   , defaultStaleInterval
@@ -43,7 +43,7 @@ data Route = Route {
 data RouteInfo = RouteInfo {
         routeSockAddr :: N.SockAddr 
       , routeAppId :: BS.ByteString
-      , routeRegTime :: UTCTime
+      , routeExpireTime :: UTCTime
     }
     
 -- Allow N.SockAddr to be undefined for some operations
@@ -60,8 +60,6 @@ data RouteConfig = RouteConfig {
         routeMap :: RouteMap
     }
 
--- TODO: pruning po 2 minutach
-    
 newRouteConfig :: IO RouteConfig
 newRouteConfig = RouteConfig <$> newMVar M.empty
 
@@ -150,8 +148,8 @@ deleteRouteFromMapping iuri route hroute limit rmap = do
             return rmap
     
         
-purgeStaleRoutes :: RouteConfig -> IO ()
-purgeStaleRoutes rconf@(RouteConfig {routeMap=mRouteMap}) = forever $ do
+pruneStaleRoutes :: RouteConfig -> IO ()
+pruneStaleRoutes rconf@(RouteConfig {routeMap=mRouteMap}) = forever $ do
     now <- getCurrentTime
     threadDelay (defaultStaleInterval * 1000000)
 --     modifyMVar_ mRoutMap $ \rmap -> do
@@ -187,11 +185,11 @@ withBestRoute :: RouteConfig       -- ^ Shared routing information
 -- as this is a sum of connections to each agent; number of persistent connections
 -- could exceed a maximum for each agent and the semaphore wouldn't behave correctly
 withBestRoute rconf uri (Just prefroute) notFound routeFound = do
-    findHostRoute rconf uri notFound $ \(HostRoute {hostRoutes, hostSemaphore}) -> do
+    findHostRoute rconf uri notFound $ \(HostRoute {hostRoutes}) -> do
         bracket
             (PQ.getRouteAndPlus1 hostRoutes prefroute)
             (maybe (return ()) PQ.itemMinus1)
-            (\item -> case item of
+            (\item' -> case item' of
                         Nothing ->
                             withBestRoute rconf uri Nothing notFound routeFound -- Failback
                         Just item ->

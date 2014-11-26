@@ -41,6 +41,10 @@ httpRequestTimeout = 30 * 1000000
 httpChunkSize :: Int
 httpChunkSize = 128 * 1024
 
+-- | Delay between router.start NATS message and actual start of routing
+startProxyDelay :: Int
+startProxyDelay = 3000000
+
 vcapCookieName :: BS.ByteString
 vcapCookieName = "__VCAP_ID__"
 
@@ -111,8 +115,8 @@ routeRequest rconf manager req sendResponse = do
             
                                                
         -- Try to decide for a preferred host if both stickyCookieName and vcapCookieName exist
-        getPrefHost req = do -- Maybe Monad
-            cookies <- parseCookies <$> lookup "cookie" (WAI.requestHeaders req)
+        getPrefHost req' = do -- Maybe Monad
+            cookies <- parseCookies <$> lookup "cookie" (WAI.requestHeaders req')
             _ <- lookup stickyCookieName cookies -- Exit function if this fails
             prefcookie <- lookup vcapCookieName cookies
             let (host, sport) = BS.span (/=':') prefcookie
@@ -171,7 +175,7 @@ main = do
     
     -- Wait a moment until we get some messages over NATS
     putStrLn "Waiting for instances to publish their mappings..."
-    threadDelay (msetStartDelay settings)
+    threadDelay startProxyDelay
     putStrLn "Serving requests."
     
     -- Use 128K blocks for data transfer using HTTP, make the initial connection timeout faster

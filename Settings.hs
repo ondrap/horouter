@@ -13,9 +13,8 @@ data MainSettings = MainSettings {
 
       , msetNats :: [NatsHost]
       
-      , msetStartDelay :: Int
-      , msetPruneInterval :: Int
-      , msetDropletStaleTime :: Int
+      , msetPruneStaleDropletsInterval :: Int
+      , msetDropletStaleThreshold :: Int
       
       , msetUUID :: String
       , msetStart :: UTCTime
@@ -29,9 +28,8 @@ defaultMainSettings = MainSettings {
         msetIndex = 0
       , msetPort = 2222
       , msetNats = [(NatsHost "localhost" 4222 "" "")]
-      , msetStartDelay = 5 * seconds
-      , msetPruneInterval = 15 * seconds
-      , msetDropletStaleTime = 120 * seconds
+      , msetPruneStaleDropletsInterval = 30 * seconds
+      , msetDropletStaleThreshold = 120 * seconds
       
       , msetUUID = "empty"
       , msetStart = UTCTime (fromGregorian 1970 1 1) 0
