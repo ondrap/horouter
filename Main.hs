@@ -23,6 +23,7 @@ import qualified Network.Socket               as N
 import qualified Network.Wai                  as WAI
 import           Network.Wai.Handler.Warp     (defaultSettings, runSettings,
                                                setNoParsePath, setPort)
+import System.Environment (getArgs)
 import           Settings
 import           System.Timeout
 import           Web.Cookie                   (SetCookie (..), parseCookies,
@@ -75,7 +76,7 @@ routeRequest rconf manager req sendResponse = do
                 newheaders = ("X-Cf-Applicationid", appid)
                         : ("X-Cf-Instanceid", BS.concat [host, ":", BS.pack (show port)])
                         : ("X-Request-Start", BS.pack $ show (truncate (1000 * (convert requestStartTime :: Rational)) :: Int64))
-                        : ("X-Vcap-Request-Id", BS.pack $ show $ vcapreqid)
+                        : ("X-Vcap-Request-Id", BS.pack $ show vcapreqid)
                         : WAI.requestHeaders req
                 newreq = req{WAI.requestHeaders=newheaders}
                 proxySettings = defProxySettings {
@@ -161,13 +162,21 @@ openSocketConnectionTimeoutSize wtimeout a b c host port = do
          Just x -> return x
          Nothing -> throwIO $ HC.FailedConnectionException host port
 
+makeSettings :: [String] -> IO MainSettings
+makeSettings [] = return defaultMainSettings
+makeSettings ["-c", fname] = readSettings fname
+makeSettings _ = do
+  putStrLn "Usage: horouter [-c config_file]"
+  error "Incorrect parameters"
+
+
 main :: IO ()
 main = do
+    args <- getArgs
+    rsettings <- makeSettings args
     -- Build settings
     uuid <- nextRandom
     now <- getCurrentTime
-
-    rsettings <- readSettings "gorouter.yml"
 
     let settings = rsettings {
             msetUUID = show (msetIndex settings) ++ "-" ++ show uuid
