@@ -31,13 +31,12 @@ import Data.Streaming.Network (readLens, AppData)
 import Data.Functor.Identity (Identity (..))
 import Data.Maybe (fromMaybe)
 import Control.Monad.Trans.Control (MonadBaseControl)
-import Data.Default.Class (def)
+import Data.Default.Class (def, Default(..))
 import qualified Network.Wai as WAI
 import qualified Network.HTTP.Client as HC
 import qualified Network.HTTP.Client.Internal as HCI
 import Network.HTTP.Client (BodyReader, brRead)
 import Control.Exception (bracket)
-import Blaze.ByteString.Builder (fromByteString)
 import Data.Word8 (isSpace, _colon, _cr)
 import qualified Data.ByteString as S
 import qualified Data.ByteString.Char8 as S8
@@ -48,13 +47,12 @@ import qualified Data.Text.Lazy as TL
 import qualified Data.Conduit.Network as DCN
 import Control.Concurrent.MVar.Lifted (newEmptyMVar, putMVar, takeMVar)
 import Control.Concurrent.Lifted (fork, killThread)
-import Data.Default.Class (Default (..))
 import Network.Wai.Logger (showSockAddr)
 import qualified Data.Set as Set
 import Data.IORef
 import qualified Data.ByteString.Lazy as L
 import Control.Concurrent.Async (concurrently)
-import Blaze.ByteString.Builder (Builder, toLazyByteString)
+import Blaze.ByteString.Builder (Builder, toLazyByteString, fromByteString)
 import Data.ByteString (ByteString)
 import Control.Monad.IO.Class (MonadIO, liftIO)
 import Control.Monad (unless, void)
@@ -223,7 +221,7 @@ instance Default WaiProxySettings where
                 result = elem "websocket" <$> tokens
             in
                 result == Just True
-                
+
         , wpsProcessHeaders = id
         }
 
@@ -282,7 +280,7 @@ stripClientHeaders = filter (\(key, _) -> not $ key `Set.member` strippedHeaders
 
 fixReqHeaders :: WaiProxySettings -> WAI.Request -> HT.RequestHeaders
 fixReqHeaders wps req =
-    addXRealIP 
+    addXRealIP
         $ addEmptyAcceptEncoding
         $ filter (\(key, value) -> not $ key `Set.member` strippedHeadersToServer
                                        || (key == "connection" && value == "close"))
@@ -290,7 +288,7 @@ fixReqHeaders wps req =
   where
     fromSocket hdr = ((hdr, S8.pack $ showSockAddr $ WAI.remoteHost req):)
     -- Adding empty accept-encoding header forces http-client not to add Accept-encoding: gzip
-    addEmptyAcceptEncoding = 
+    addEmptyAcceptEncoding =
         case lookup "accept-encoding" (WAI.requestHeaders req) of
              Nothing -> (("accept-encoding", ""):)
              Just _ -> id
@@ -311,15 +309,15 @@ waiProxyToSettings getDest wps manager req0 sendResponse = do
     edest' <- getDest req0
     let edest =
             case edest' of
-                WPRResponse res -> Left $ \_req -> ($ res)
+                WPRResponse res -> Left $ const ($ res)
                 WPRProxyDest pd -> Right (pd, req0)
                 WPRModifiedRequest req pd -> Right (pd, req)
                 WPRApplication app -> Left app
     case edest of
         Left app -> app req0 sendResponse
-        Right (ProxyDest host port, req) -> 
+        Right (ProxyDest host port, req) ->
                 waiDoProxy wps manager host port Nothing req sendResponse
-           
+
 
 waiDoProxy :: WaiProxySettings
                     -> HCI.Manager
@@ -354,23 +352,23 @@ waiDoProxy wps manager host port hostaddress req sendResponse =
         bracket
             (try $ HC.responseOpen req' manager)
             (either (const $ return ()) HC.responseClose)
-            $ \ex -> do
-            case ex of
-                Left e -> wpsOnExc wps e req sendResponse
-                Right res -> do
-                    let conduit =
-                            case wpsProcessBody wps $ fmap (const ()) res of
-                                Nothing -> awaitForever (\bs -> yield (Chunk $ fromByteString bs) >> yield Flush)
-                                Just conduit' -> conduit'
-                        src = bodyReaderSource $ HC.responseBody res
-                        
-                    sendResponse $ WAI.responseStream
-                        (HC.responseStatus res)
-                        (stripClientHeaders $ wpsProcessHeaders wps $ HC.responseHeaders res)
-                        (\sendChunk flush -> src $= conduit $$ CL.mapM_ (\mb ->
-                            case mb of
-                                Flush -> flush
-                                Chunk b -> sendChunk b))
+            $ \ex ->
+              case ex of
+                  Left e -> wpsOnExc wps e req sendResponse
+                  Right res -> do
+                      let conduit =
+                              case wpsProcessBody wps $ fmap (const ()) res of
+                                  Nothing -> awaitForever (\bs -> yield (Chunk $ fromByteString bs) >> yield Flush)
+                                  Just conduit' -> conduit'
+                          src = bodyReaderSource $ HC.responseBody res
+
+                      sendResponse $ WAI.responseStream
+                          (HC.responseStatus res)
+                          (stripClientHeaders $ wpsProcessHeaders wps $ HC.responseHeaders res)
+                          (\sendChunk flush -> src $= conduit $$ CL.mapM_ (\mb ->
+                              case mb of
+                                  Flush -> flush
+                                  Chunk b -> sendChunk b))
 
 -- | Get the HTTP headers for the first request on the stream, returning on
 -- consumed bytes as leftovers. Has built-in limits on how many bytes it will

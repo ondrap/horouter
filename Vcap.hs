@@ -1,41 +1,46 @@
-{-# LANGUAGE TemplateHaskell,OverloadedStrings,RecordWildCards,PatternGuards, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE PatternGuards       #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
 
 module Vcap (
     startVcap,
-    makeVcapMsg 
+    makeVcapMsg
 ) where
-    
-import Network.Socket (SockAddr(..))
-import Data.Aeson as AE
-import Data.Time.Clock
-import Data.Time.Format (formatTime)
-import System.Locale (defaultTimeLocale)
 
-import Data.Aeson.TH (deriveToJSON, defaultOptions, fieldLabelModifier)
-import Data.Char (toLower)
-import qualified Data.Text as T
-import Data.IP (IPv4, toHostAddress)
-import Control.Applicative ((<$>))
-import Settings
-import Text.Printf (printf)
+import           Data.Aeson          as AE
+import           Data.Time.Clock
+import           Data.Time.Format    (formatTime)
+import           Network.Socket      (SockAddr (..))
+import           System.Locale       (defaultTimeLocale)
 
-import Network.Nats (subscribe, Nats)
-import Network.Nats.Json (publish)
-import RtrNats (getExternalIPs)
-    
+import           Control.Applicative ((<$>))
+import           Data.Aeson.TH       (defaultOptions, deriveToJSON,
+                                      fieldLabelModifier)
+import           Data.Char           (toLower)
+import           Data.IP             (IPv4, toHostAddress)
+import qualified Data.Text           as T
+import           Settings            (MainSettings (..))
+import           Text.Printf         (printf)
+
+import           Network.Nats        (Nats, subscribe)
+import           Network.Nats.Json   (publish)
+import           RtrNats             (getExternalIPs)
+
 data VcapAnnounce = VcapAnnounce {
-        vcapType :: String
-      , vcapIndex :: Int
-      , vcapHost :: SockAddr
+        vcapType        :: String
+      , vcapIndex       :: Int
+      , vcapHost        :: SockAddr
       , vcapCredentials :: (String, String)
-      , vcapStart :: String
-      , vcapUptime :: String
-      , vcapUuid :: String
+      , vcapStart       :: String
+      , vcapUptime      :: String
+      , vcapUuid        :: String
     } deriving (Show)
-$(deriveToJSON defaultOptions{fieldLabelModifier=(map toLower . drop 4)} ''VcapAnnounce)
+$(deriveToJSON defaultOptions{fieldLabelModifier = map toLower . drop 4} ''VcapAnnounce)
 
 instance ToJSON SockAddr where
-    toJSON addr = AE.String $ T.pack $ (show addr)
+    toJSON addr = AE.String $ T.pack (show addr)
 
 startVcap :: Nats -> MainSettings -> IO ()
 startVcap nats settings = do
@@ -45,17 +50,17 @@ startVcap nats settings = do
     _ <- subscribe nats "vcap.component.discover" Nothing (handleDiscover iface)
     publish nats "vcap.component.announce" msg
     return ()
-    where 
+    where
         handleDiscover iface _ _ _ (Just reply) = do
             now <- getCurrentTime
-            let msg = makeVcapMsg settings iface now 
+            let msg = makeVcapMsg settings iface now
             publish nats reply msg
         handleDiscover _ _ _ _ Nothing      = return ()
-    
+
 makeVcapMsg :: MainSettings -> IPv4 -> UTCTime -> VcapAnnounce
-makeVcapMsg settings iface now = 
+makeVcapMsg settings iface now =
     let
-        iuptime = (round $ toRational $ (now `diffUTCTime` (msetStart settings))) :: Int
+        iuptime = (round $ toRational (now `diffUTCTime` msetStart settings)) :: Int
         days = iuptime `div` 86400
         hours = (iuptime `mod` 86400) `div` 3600
         minutes = (iuptime `mod` 3600) `div` 60

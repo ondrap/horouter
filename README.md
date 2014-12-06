@@ -22,14 +22,20 @@ What it can do:
 
 What is planned:
 
+* Configurable persistence support
+
 * Reasonably compatibile YAML configuration file with gorouter.
     
 * Working logging system.
     
 * Endpoints /route and /varz.
+
+* Customizable error pages
+
+* statistics that could help with deciding if autoscaling is needed
+
+* throttling
     
 * distributed least connection loadbalancing
 
-* statistics that could help with deciding if autoscaling is needed
-    
 * application to view these statistics
