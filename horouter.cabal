@@ -50,5 +50,6 @@ executable horouter
                   , iproute
                   , old-locale
                   , cookie
+                  , yaml
 
   ghc-options:         -O2 -Wall

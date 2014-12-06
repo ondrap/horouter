@@ -127,9 +127,10 @@ routeDel (RouteConfig {routeMap}) uri route = modifyMVar_ routeMap $ \rmap -> do
         hroute <- MaybeT (return $ M.lookup iuri rmap)
         (_, limit, _) <- MaybeT $ PQ.lookup route (hostRoutes hroute)
         -- Remove from mapping
-        lift $ PQ.delete route (hostRoutes hroute)
-        _ <- lift $ forkIO $ SEM.wait (hostSemaphore hroute) limit
-        lift $ updateEmptyMapping iuri hroute rmap
+        lift $ do
+          PQ.delete route (hostRoutes hroute)
+          void $ forkIO $ SEM.wait (hostSemaphore hroute) limit
+          updateEmptyMapping iuri hroute rmap
     return $ fromMaybe rmap newmap
     where
         iuri = CI.mk uri
@@ -151,15 +152,15 @@ updateEmptyMapping iuri hroute rmap = do
 
 
 pruneStaleRoutes :: MainSettings -> RouteConfig -> IO ()
-pruneStaleRoutes settings rconf@(RouteConfig {routeMap=mRouteMap}) = forever $ do
-    now <- getCurrentTime
+pruneStaleRoutes settings (RouteConfig {routeMap=mRouteMap}) = forever $ do
     threadDelay $ msetPruneStaleDropletsInterval settings * seconds
+    now <- getCurrentTime
     modifyMVar_ mRouteMap $ \rmap ->
         foldM (removeStale now) rmap (M.toList rmap)
 
     where
         removeStale now rmap (uri, hroute) = do
-            PQ.removeBy (\(rt, dta) -> routeExpireTime dta < now) (hostRoutes hroute)
+            PQ.removeBy (\(_, dta) -> routeExpireTime dta < now) (hostRoutes hroute)
             updateEmptyMapping uri hroute rmap
 
 data RouteException = RouteException Route SomeException

@@ -64,6 +64,7 @@ defProxySettings = def{
 routeRequest :: RouteConfig -> HC.Manager -> WAI.Application
 routeRequest rconf manager req sendResponse = do
     requestStartTime <- getCurrentTime
+    vcapreqid <- Data.UUID.V4.nextRandom
     let (Just uri) = BS.takeWhile (/= ':') <$> WAI.requestHeaderHost req
         prefhost = getPrefHost req
 
@@ -74,6 +75,7 @@ routeRequest rconf manager req sendResponse = do
                 newheaders = ("X-Cf-Applicationid", appid)
                         : ("X-Cf-Instanceid", BS.concat [host, ":", BS.pack (show port)])
                         : ("X-Request-Start", BS.pack $ show (truncate (1000 * (convert requestStartTime :: Rational)) :: Int64))
+                        : ("X-Vcap-Request-Id", BS.pack $ show $ vcapreqid)
                         : WAI.requestHeaders req
                 newreq = req{WAI.requestHeaders=newheaders}
                 proxySettings = defProxySettings {
@@ -164,10 +166,11 @@ main = do
     -- Build settings
     uuid <- nextRandom
     now <- getCurrentTime
-    let rtindex = 0
-    let settings = defaultMainSettings{
-            msetUUID = show rtindex ++ "-" ++ show uuid
-          , msetIndex = rtindex
+
+    rsettings <- readSettings "gorouter.yml"
+
+    let settings = rsettings {
+            msetUUID = show (msetIndex settings) ++ "-" ++ show uuid
           , msetStart = now
         }
 

@@ -1,4 +1,8 @@
-{-# LANGUAGE TemplateHaskell,OverloadedStrings,RecordWildCards,PatternGuards, ScopedTypeVariables #-}
+{-# LANGUAGE OverloadedStrings   #-}
+{-# LANGUAGE PatternGuards       #-}
+{-# LANGUAGE RecordWildCards     #-}
+{-# LANGUAGE ScopedTypeVariables #-}
+{-# LANGUAGE TemplateHaskell     #-}
 module RtrNats (
     startNatsService
   , registerWebService
@@ -6,35 +10,36 @@ module RtrNats (
   , getExternalIPs
 ) where
 
-import Data.Char (toLower)
-import Data.Aeson as AE
-import Data.Aeson.TH (deriveJSON, deriveToJSON, defaultOptions, fieldLabelModifier)
-import qualified Network.Info as NetInfo
-import Data.IP (IPv4, fromHostAddress)
-import qualified Network.Socket as NS
-import Control.Monad
-import Control.Concurrent (forkIO)
-import Control.Applicative ((<$>), (<*>), pure)
+import           Control.Applicative   (pure, (<$>), (<*>))
+import           Control.Concurrent    (forkIO)
+import           Control.Exception     (IOException, bracket, catch)
+import           Control.Monad
+import           Data.Aeson            as AE
+import           Data.Aeson.TH         (defaultOptions, deriveJSON,
+                                        deriveToJSON, fieldLabelModifier)
 import qualified Data.ByteString.Char8 as BS
-import Control.Exception (bracket, catch, IOException)
+import           Data.Char             (toLower)
+import           Data.IP               (IPv4, fromHostAddress)
+import qualified Network.Info          as NetInfo
+import qualified Network.Socket        as NS
 
-import qualified Data.Map as Map
-import qualified Data.Text as T
-import Data.Text.Encoding (encodeUtf8, decodeUtf8)
-import qualified Network.Nats as NATS
-import Network.Nats.Json
-import Data.Time.Clock (getCurrentTime, addUTCTime)
+import qualified Data.Map              as Map
+import qualified Data.Text             as T
+import           Data.Text.Encoding    (decodeUtf8, encodeUtf8)
+import           Data.Time.Clock       (addUTCTime, getCurrentTime)
+import qualified Network.Nats          as NATS
+import           Network.Nats.Json
 
-import RouteConfig
-import Settings
-import Utils
+import           RouteConfig
+import           Settings
+import           Utils
 
 defaultParallelLimit :: Int
 defaultParallelLimit = 20
 
 data RtrStart = RtrStart {
-        rtrId :: String
-      , rtrHosts :: [IPv4]
+        rtrId                               :: String
+      , rtrHosts                            :: [IPv4]
       , rtrMinimumRegisterIntervalInSeconds :: Int
     } deriving (Show)
 $(deriveJSON defaultOptions{fieldLabelModifier=(\(c:cs) -> toLower c : cs) . drop 3} ''RtrStart)
@@ -47,13 +52,13 @@ instance FromJSON IPv4 where
     parseJSON _ = mzero
 
 data RtrRegister = RtrRegister {
-        rtrUris :: [BS.ByteString]
-      , rtrTags :: Map.Map String T.Text
-      , rtrHost ::  BS.ByteString
-      , rtrPort :: Int
-      , rtrParallelLimit :: Int
-      , rtrApp :: BS.ByteString
-      , rtrPrivateInstanceId :: BS.ByteString
+        rtrUris                    :: [BS.ByteString]
+      , rtrTags                    :: Map.Map String T.Text
+      , rtrHost                    ::  BS.ByteString
+      , rtrPort                    :: Int
+      , rtrParallelLimit           :: Int
+      , rtrApp                     :: BS.ByteString
+      , rtrPrivateInstanceId       :: BS.ByteString
       , rtrStaleThresholdInSeconds :: Maybe Int
     } deriving (Show)
 
@@ -69,13 +74,13 @@ instance FromJSON RtrRegister where
     parseJSON (AE.Object v) =
         RtrRegister <$>
             v .: "uris" <*>
-            v .: "tags" .!= Map.empty <*>
+            v .:? "tags" .!= Map.empty <*>
             v .: "host" <*>
             v .: "port" <*>
-            v .: "parallel_limit" .!= defaultParallelLimit <*>
-            v .: "app" .!= "" <*>
-            v .: "private_instance_id" .!= "" <*>
-            v .: "stale_threshold_in_seconds"
+            v .:? "parallel_limit" .!= defaultParallelLimit <*>
+            v .:? "app" .!= "" <*>
+            v .:? "private_instance_id" .!= "" <*>
+            v .:? "stale_threshold_in_seconds"
     parseJSON _ = mzero
 
 getExternalIPs :: IO [IPv4]
@@ -128,6 +133,7 @@ startNatsService :: RouteConfig -> MainSettings -> IO NATS.Nats
 startNatsService rconf settings = do
     rtrstartmsg <- localRtrStartMsg (msetUUID settings)
     nats <- NATS.connectSettings NATS.defaultSettings{
+            NATS.natsHosts = msetNats settings,
             NATS.natsOnReconnect = onReconnect rtrstartmsg
         }
 
