@@ -51,6 +51,6 @@ executable horouter
                   , old-locale
                   , cookie
                   , yaml
+                  , wai-extra
 
   ghc-options:         -O2 -Wall -threaded
-  

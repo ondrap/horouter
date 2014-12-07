@@ -13,6 +13,7 @@ module RouteConfig (
   , pruneStaleRoutes
   , withBestRoute
   , RouteException(..)
+  , dumpRtConf
 ) where
 
 import           Control.Applicative       ((<$>))
@@ -22,6 +23,7 @@ import           Control.Concurrent.MVar
 import           Control.Exception         (Exception (..), SomeException,
                                             bracket, catch, throwIO)
 import           Control.Monad             (foldM, forever, void)
+import qualified Data.Traversable as T
 import           Control.Monad.Trans.Class (lift)
 import           Control.Monad.Trans.Maybe (MaybeT (..), runMaybeT)
 import qualified Data.ByteString.Char8     as BS
@@ -211,3 +213,11 @@ withBestRoute rconf uri Nothing notFound routeFound =
                     \item -> let (route, _) = PQ.valueOf item
                              in routeFound (PQ.valueOf item) `catch` (throwIO . RouteException route)
                 )
+
+-- | Return a dump of routing table
+dumpRtConf :: RouteConfig -> IO (M.Map BS.ByteString [Route])
+dumpRtConf (RouteConfig {routeMap}) = do
+  rmap <- readMVar routeMap
+  krmap <- T.mapM (PQ.toList . hostRoutes) rmap
+  let dkmap = fmap (map (\(_,_,rt,_) -> rt)) krmap
+  return $ M.mapKeys CI.original dkmap

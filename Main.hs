@@ -5,11 +5,12 @@
 
 import           Blaze.ByteString.Builder     as BLDR
 import           Control.Applicative          ((<$>))
-import           Control.Concurrent           (threadDelay)
+import           Control.Concurrent           (forkIO, threadDelay)
 import           Control.Exception
 import qualified Data.ByteString.Char8        as BS
 import           Data.Convertible.Base        (convert)
 import           Data.Convertible.Instances   ()
+import           Data.Foldable                (forM_)
 import           Data.Int
 import           Data.Time.Clock              (getCurrentTime)
 import           Data.UUID.V4
@@ -23,14 +24,15 @@ import qualified Network.Socket               as N
 import qualified Network.Wai                  as WAI
 import           Network.Wai.Handler.Warp     (defaultSettings, runSettings,
                                                setNoParsePath, setPort)
-import System.Environment (getArgs)
 import           Settings
+import           System.Environment           (getArgs)
 import           System.Timeout
 import           Web.Cookie                   (SetCookie (..), parseCookies,
                                                parseSetCookie, renderSetCookie)
 
 import           RouteConfig
 import           RtrNats
+import           StatusServer
 import           Vcap
 
 -- | Timeout for TCP connect to the client
@@ -188,6 +190,8 @@ main = do
     putStrLn "Waiting for instances to publish their mappings..."
     threadDelay startProxyDelay
     putStrLn "Serving requests."
+
+    forM_ (msetStatusSettings settings) $ forkIO . serveStatusServer rconf
 
     -- Use 128K blocks for data transfer using HTTP, make the initial connection timeout faster
     let managerSettings = HC.defaultManagerSettings  {
