@@ -50,7 +50,7 @@ data MainSettings = MainSettings {
       , msetDropletStaleThreshold :: Int
       , msetEndpointTimeout :: Int
 
-      , msetStatusSettings :: Maybe StatusSettings
+      , msetStatusSettings :: StatusSettings
 
       , msetUUID :: String
       , msetStart :: UTCTime
@@ -65,7 +65,7 @@ instance AE.FromJSON MainSettings where
         v .:? "prune_stale_droplets_interval" .!= 30 <*>
         v .:? "droplet_stale_threshold" .!= defaultStaleInterval <*>
         v .:? "endpoint_timeout" .!= httpRequestTimeout <*>
-        v .:? "status" <*>
+        v .:? "status" .!= StatusSettings 18888 ("","") <*>
         pure "-" <*>
         pure (UTCTime (fromGregorian 1970 1 1) 0)
   parseJSON _ = mzero
@@ -81,7 +81,7 @@ defaultMainSettings = MainSettings {
       , msetPruneStaleDropletsInterval = 30
       , msetDropletStaleThreshold = defaultStaleInterval
       , msetEndpointTimeout = httpRequestTimeout
-      , msetStatusSettings = Nothing
+      , msetStatusSettings = StatusSettings 18888 ("","")
 
       , msetUUID = "empty"
       , msetStart = UTCTime (fromGregorian 1970 1 1) 0

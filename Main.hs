@@ -191,7 +191,7 @@ main = do
     threadDelay startProxyDelay
     putStrLn "Serving requests."
 
-    forM_ (msetStatusSettings settings) $ forkIO . serveStatusServer rconf
+    forkIO $ serveStatusServer rconf settings
 
     -- Use 128K blocks for data transfer using HTTP, make the initial connection timeout faster
     let managerSettings = HC.defaultManagerSettings  {

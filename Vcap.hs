@@ -21,12 +21,13 @@ import           Data.Aeson.TH       (defaultOptions, deriveToJSON,
 import           Data.Char           (toLower)
 import           Data.IP             (IPv4, toHostAddress)
 import qualified Data.Text           as T
-import           Settings            (MainSettings (..))
 import           Text.Printf         (printf)
 
 import           Network.Nats        (Nats, subscribe)
 import           Network.Nats.Json   (publish)
 import           RtrNats             (getExternalIPs)
+
+import           Settings            (MainSettings (..), StatusSettings(..))
 
 data VcapAnnounce = VcapAnnounce {
         vcapType        :: String
@@ -67,12 +68,11 @@ makeVcapMsg settings iface now =
         seconds = iuptime `mod` 60
         uptime = printf "%dd:%dh:%dm:%ds" days hours minutes seconds
     in
-        -- TODO - publikovat credentials na stavovy web server
         VcapAnnounce{
             vcapType="Router",
             vcapIndex=msetIndex settings,
-            vcapHost=SockAddrInet (fromIntegral $ msetPort settings) (toHostAddress iface),
-            vcapCredentials=("", ""),
+            vcapHost=SockAddrInet (fromIntegral $ stPort $ msetStatusSettings settings) (toHostAddress iface),
+            vcapCredentials=stCred (msetStatusSettings settings),
             vcapUuid=msetUUID settings,
             vcapStart=formatTime defaultTimeLocale "%Y-%m-%d %H:%M:%S %z" (msetStart settings),
             vcapUptime=uptime

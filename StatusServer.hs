@@ -27,10 +27,10 @@ statusServer rconf req respond = handle (WAI.pathInfo req)
     handle _ = respond $ WAI.responseLBS status404 [("Content-Type", "text/plain")] "Resource not found"
 
 
-serveStatusServer :: RouteConfig -> StatusSettings -> IO ()
+serveStatusServer :: RouteConfig -> MainSettings -> IO ()
 serveStatusServer rconf settings = do
-  let webSettings = setPort (stPort settings) defaultSettings
+  let webSettings = setPort (stPort $ msetStatusSettings settings) defaultSettings
   let app = basicAuth checkCred "StatusServer" (statusServer rconf)
   runSettings webSettings app
   where
-    checkCred user pass = return $ (BS.unpack user, BS.unpack pass) == stCred settings
+    checkCred user pass = return $ (BS.unpack user, BS.unpack pass) == stCred (msetStatusSettings settings)

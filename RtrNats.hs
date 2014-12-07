@@ -87,6 +87,7 @@ getExternalIPs :: IO [IPv4]
 getExternalIPs = (map (fromHostAddress . (\(NetInfo.IPv4 x) -> x) . NetInfo.ipv4) . filter isExternal) <$> NetInfo.getNetworkInterfaces
     where
         isExternal (NetInfo.NetworkInterface {name="lo"}) = False
+        isExternal (NetInfo.NetworkInterface {name="lo0"}) = False
         isExternal (NetInfo.NetworkInterface {ipv4=(NetInfo.IPv4 0)}) = False
         isExternal _ = True
 
