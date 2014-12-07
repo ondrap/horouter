@@ -52,4 +52,5 @@ executable horouter
                   , cookie
                   , yaml
 
-  ghc-options:         -O2 -Wall
+  ghc-options:         -O2 -Wall -threaded
+  

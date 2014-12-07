@@ -16,6 +16,14 @@ import Data.Aeson as AE
 import Control.Applicative ((<$>), (<*>), pure)
 import Control.Monad (mzero)
 
+defaultStaleInterval :: Int
+defaultStaleInterval = 120
+
+-- | Timeout for the HTTP request to start sending data
+httpRequestTimeout :: Int
+httpRequestTimeout = 30
+
+
 data MainSettings = MainSettings {
         msetIndex :: Int
       , msetPort :: Int
@@ -24,6 +32,8 @@ data MainSettings = MainSettings {
 
       , msetPruneStaleDropletsInterval :: Int
       , msetDropletStaleThreshold :: Int
+      , msetEndpointTimeout :: Int
+
 
       , msetUUID :: String
       , msetStart :: UTCTime
@@ -32,20 +42,18 @@ data MainSettings = MainSettings {
 instance AE.FromJSON MainSettings where
   parseJSON (AE.Object v) =
       MainSettings <$>
-        v .: "index" .!= 0 <*>
-        v .: "port" .!= 8888 <*>
-        v .: "nats" .!= [NatsHost "localhost" 4222 "nats" "nats"] <*>
-        v .: "prune_stale_droplets_interval" .!= 30 <*>
-        v .: "droplet_stale_threshold" .!= 120 <*>
+        v .:? "index" .!= 0 <*>
+        v .:? "port" .!= 8888 <*>
+        v .:? "nats" .!= [NatsHost "localhost" 4222 "nats" "nats"] <*>
+        v .:? "prune_stale_droplets_interval" .!= 30 <*>
+        v .:? "droplet_stale_threshold" .!= defaultStaleInterval <*>
+        v .:? "endpoint_timeout" .!= httpRequestTimeout <*>
         pure "-" <*>
         pure (UTCTime (fromGregorian 1970 1 1) 0)
   parseJSON _ = mzero
 
 seconds :: Int
 seconds = 1000000
-
-defaultStaleInterval :: Int
-defaultStaleInterval = 120
 
 defaultMainSettings :: MainSettings
 defaultMainSettings = MainSettings {
@@ -54,6 +62,7 @@ defaultMainSettings = MainSettings {
       , msetNats = [NatsHost "localhost" 4222 "" ""]
       , msetPruneStaleDropletsInterval = 30
       , msetDropletStaleThreshold = defaultStaleInterval
+      , msetEndpointTimeout = httpRequestTimeout
 
       , msetUUID = "empty"
       , msetStart = UTCTime (fromGregorian 1970 1 1) 0

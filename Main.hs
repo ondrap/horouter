@@ -37,10 +37,6 @@ import           Vcap
 clientConnectTimeout :: Int
 clientConnectTimeout = 2 * 1000000
 
--- | Timeout for the HTTP request to start sending data
-httpRequestTimeout :: Int
-httpRequestTimeout = 30 * 1000000
-
 -- | Block size that should be used to transfer data between APP instance and client
 httpChunkSize :: Int
 httpChunkSize = 128 * 1024
@@ -58,12 +54,11 @@ stickyCookieName = "JSESSIONID"
 defProxySettings :: WaiProxySettings
 defProxySettings = def{
                     wpsOnExc= throw,
-                    wpsTimeout=Just httpRequestTimeout,
                     wpsSetIpHeader=SIHFromSocket "X-Forwarded-For"
                 }
 
-routeRequest :: RouteConfig -> HC.Manager -> WAI.Application
-routeRequest rconf manager req sendResponse = do
+routeRequest :: MainSettings -> RouteConfig -> HC.Manager -> WAI.Application
+routeRequest settings rconf manager req sendResponse = do
     requestStartTime <- getCurrentTime
     vcapreqid <- Data.UUID.V4.nextRandom
     let (Just uri) = BS.takeWhile (/= ':') <$> WAI.requestHeaderHost req
@@ -80,7 +75,8 @@ routeRequest rconf manager req sendResponse = do
                         : WAI.requestHeaders req
                 newreq = req{WAI.requestHeaders=newheaders}
                 proxySettings = defProxySettings {
-                    wpsProcessHeaders = addVcapId route
+                    wpsProcessHeaders = addVcapId route,
+                    wpsTimeout= if msetEndpointTimeout settings == 0 then Nothing else Just (msetEndpointTimeout settings * seconds)
                 }
 
           proxyStartTime <- getCurrentTime
@@ -149,7 +145,7 @@ routeRequest rconf manager req sendResponse = do
                             -- Remove hostname from route table, if this is not the last route
                             routeDel rconf uri route
                             -- Retry with other host
-                            routeRequest rconf manager req sendResponse
+                            routeRequest settings rconf manager req sendResponse
 
 
 -- | Wrapper for opening connection to support different timeout on socket connect
@@ -201,5 +197,5 @@ main = do
     let webSettings = setPort (msetPort settings) $ setNoParsePath True defaultSettings
 
     HC.withManager managerSettings $ \manager -> do
-        let app = routeRequest rconf manager
+        let app = routeRequest settings rconf manager
         runSettings webSettings app
