@@ -22,7 +22,7 @@ executable horouter
                   , bytestring
                   , containers==0.5.*
                   , PSQueue==1.1
-                  , nats-queue
+                  , nats-queue==0.1.2.0
                   , text
                   , network >= 2
                   , aeson == 0.7.*
