@@ -1,0 +1,14 @@
+
+port: 2222
+
+nats:
+  - host: "localhost"
+    port: 4222
+    user: foo
+    pass: bar
+
+status:
+  port: 8082
+  user: hoge
+  pass: fuga
+

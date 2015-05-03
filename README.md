@@ -4,7 +4,25 @@ HoRouter
 This is an alternative router implementation for Cloud Foundry. It is written mostly
 for fun but it seems it could work quite well.
 
-What it can do:
+### Usage
+
+```sh
+cabal update
+cabal install
+
+# run it
+runhaskell Main.hs
+
+# ...or build then run
+cabal build
+./dist/build/horouter/horouter -c examples/config.yml
+
+Waiting for instances to publish their mappings...
+Serving requests.
+
+```
+
+### What it can do
 
 * Respects the gorouter NATS protocol for automatic registration of application
   instances.
@@ -22,8 +40,7 @@ What it can do:
 
 * Reasonably compatibile YAML configuration file with gorouter.
 
-
-What is planned:
+### What is planned
 
 * Configurable persistence support
 
